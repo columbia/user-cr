@@ -3,7 +3,7 @@
 DEBUG = -DCHECKPOINT_DEBUG
 
 # look for includes
-PATHS = -I/home/ncl/work/linux-cr/linux-2.6-orenl/include
+PATHS = -I../linux-2.6-orenl/include
 
 # extra warnings and fun
 WARNS := -Wall -Wstrict-prototypes -Wno-trigraphs

@@ -25,7 +25,7 @@ struct cr_ctx {
 	int fd;
 	pid_t pid;
 	int tasks_nr;
-	struct cr_hdr_pids *tasks_arr;
+	struct cr_hdr_pids *pids_arr;
 };
 
 static int cr_read(struct cr_ctx *ctx, void *buf, int count);
@@ -58,7 +58,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	ret = cr_make_tree(&ctx, getpid(), 0);
+	ret = cr_make_tree(&ctx, ctx.pids_arr[0].vpid, 0);
 
 	/* should not return ... */
 
@@ -150,21 +150,21 @@ static int cr_read_tree(struct cr_ctx *ctx)
 		return -1;
 	}
 
-	cr_dbg("number of tasks: %d\n", hh.nr_tasks);
+	cr_dbg("number of tasks: %d\n", hh.tasks_nr);
 
-	if (hh.nr_tasks <= 0) {
-		cr_err("invalid number of tasks %d", hh.nr_tasks);
+	if (hh.tasks_nr <= 0) {
+		cr_err("invalid number of tasks %d", hh.tasks_nr);
 		return -1;
 	}
 
-	ctx->tasks_nr = hh.nr_tasks;
-	ctx->tasks_arr = malloc(sizeof(*ctx->tasks_arr) * ctx->tasks_nr);
+	ctx->tasks_nr = hh.tasks_nr;
+	ctx->pids_arr = malloc(sizeof(*ctx->pids_arr) * ctx->tasks_nr);
 
-	if (!ctx->tasks_arr)
+	if (!ctx->pids_arr)
 		return -1;
 
-	ret = cr_read(ctx, ctx->tasks_arr,
-		      sizeof(*ctx->tasks_arr) * ctx->tasks_nr);
+	ret = cr_read(ctx, ctx->pids_arr,
+		      sizeof(*ctx->pids_arr) * ctx->tasks_nr);
 	return ret;
 }
 
@@ -180,19 +180,20 @@ static int cr_make_tree(struct cr_ctx *ctx, pid_t pid, int pos)
 	first = pos;
 
 	while (pos < ctx->tasks_nr) {
-		parent = ctx->tasks_arr[pos++].parent;
+		parent = ctx->pids_arr[pos++].parent;
 		if (parent != pid)
 			continue;
 
 		cr_dbg("forking entry[%d].vpid = %d\n",
-		       pos, ctx->tasks_arr[pos-1].vpid);
+		       pos, ctx->pids_arr[pos - 1].vpid);
 
 		child = fork();
 		switch (child) {
 		case -1:
 			return -1;
 		case 0:
-			return cr_make_tree(ctx, getpid(), pos);
+			pid = ctx->pids_arr[pos - 1].vpid;
+			return cr_make_tree(ctx, pid, pos);
 		default:
 			break;
 		}
