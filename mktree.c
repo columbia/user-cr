@@ -10,6 +10,10 @@
 
 #include <linux/checkpoint_hdr.h>
 
+#define _GNU_SOURCE
+#include <getopt.h>
+#undef _GNU_SOURCE
+
 #ifdef CHECKPOINT_DEBUG
 #define cr_dbg(format, args...)  \
 	fprintf(stderr, "[%d]" format, getpid(), ##args)
@@ -36,6 +40,7 @@ struct cr_ctx {
 	struct cr_hdr_pids *pids_new;
 	struct cr_hdr_pids *pids_sav;
 	char buf[BUFSIZE];
+	struct args *args;
 };
 
 static int cr_write(int fd, void *buf, int count);
@@ -57,23 +62,76 @@ struct pid_swap {
 	pid_t new;
 };
 
+struct args {
+	int pids;
+};
+
 int pipefd[4];
+
+static char usage_str[] =
+"usage: mktree [opts]\n"
+"  mktree restores from a checkpoint image by first creating in userspace\n"
+"  the original tasks tree, and then calling sys_restart by each task.\n"
+"\tOptions:\n"
+"\t -h,--help             print this help message\n"
+"\t -p,--pids             restore original tasks' pids (in container)\n"
+"\t -P,--no-pids          do not restore original tasks' pids\n"
+"";
+
+static void usage(char *str)
+{
+	fprintf(stderr, "%s", str);
+	exit(1);
+}
+
+static void parse_args(struct args *args, int argc, char *argv[])
+{
+	static struct option opts[] = {
+		{ "help",	no_argument,		NULL, 'h' },
+		{ "no-pids",	no_argument,		NULL, 'P' },
+		{ "pids",	no_argument,		NULL, 'p' },
+		{ NULL,		0,			NULL, 0 }
+	};
+	static char optc[] = "hpPv";
+
+	/* defaults */
+	args->pids = 1;
+
+	while (1) {
+		int c = getopt_long(argc, argv, optc, opts, NULL);
+		if (c == -1)
+			break;
+		switch (c) {
+		case '?':
+			exit(1);
+		case 'h':
+			usage(usage_str);
+		case 'p':
+			args->pids = 1;
+			break;
+		case 'P':
+			args->pids = 0;
+			break;
+		default:
+			usage(usage_str);
+		}
+	}
+}
 
 int main(int argc, char *argv[])
 {
 	struct cr_ctx ctx;
+	struct args args;
 	int ret;
 
-	if (pipe(&pipefd[0]) < 0 || pipe(&pipefd[2])) {
-		perror("pipe");
-		exit(1);
-	}
-
 	memset(&ctx, 0, sizeof(ctx));
+	memset(&args, 0, sizeof(args));
+
+	parse_args(&args, argc, argv);
 
 	ctx.in = STDIN_FILENO;
-
 	ctx.pid = getpid();
+	ctx.args = &args;
 
 	ret = cr_read_head(&ctx);
 	if (ret < 0) {
@@ -84,6 +142,20 @@ int main(int argc, char *argv[])
 	ret = cr_read_tree(&ctx);
 	if (ret < 0) {
 		perror("read c/r tree");
+		exit(1);
+	}
+
+	if (args.pids) {
+		/* should not return ... */
+		ret = cr_make_tree(&ctx, getpid(), 0);
+		cr_dbg("c/r make tree failed ?\n");
+		exit(1);
+	}
+
+	/* else - no need to 'restore' original pids */
+
+	if (pipe(&pipefd[0]) < 0 || pipe(&pipefd[2])) {
+		perror("pipe");
 		exit(1);
 	}
 
@@ -186,11 +258,11 @@ static int cr_read_obj_type(struct cr_ctx *ctx, void *buf, int n, int type)
 	struct cr_hdr *h = (struct cr_hdr *) ctx->buf;
 	int ret;
 
-	ret = cr_read_obj(ctx, &h, buf, n);
+	ret = cr_read_obj(ctx, h, buf, n);
 	if (ret < 0)
 		return ret;
-	if (h.type == type)
-		ret = h.parent;
+	if (h->type == type)
+		ret = h->parent;
 	else
 		ret = -1;
 	return ret;
@@ -295,13 +367,15 @@ static int cr_make_tree(struct cr_ctx *ctx, pid_t pid, int pos)
 
 	first = pos;
 
-	/* communicate via pipe that all is well */
-	swap.old = pid;
-	swap.new = getpid();
-	ret = write(pipefd[1], &swap, sizeof(swap));
-	if (ret != sizeof(swap)) {
-		perror("write swap");
-		exit(1);
+	if (!ctx->args->pids) {
+		/* communicate via pipe that all is well */
+		swap.old = pid;
+		swap.new = getpid();
+		ret = write(pipefd[1], &swap, sizeof(swap));
+		if (ret != sizeof(swap)) {
+			perror("write swap");
+			exit(1);
+		}
 	}
 
 	while (pos < ctx->tasks_nr) {
