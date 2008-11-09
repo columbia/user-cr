@@ -32,7 +32,7 @@ static char usage_str[] =
 "\tOptions:\n"
 "\t -h,--help             print this help message\n"
 "\t -p,--pids             restore original tasks' pids (in container)\n"
-"\t -P,--no-pids          do not restore original tasks' pids\n"
+"\t -P,--no-pids          do not restore original tasks' pids (default)\n"
 "";
 
 /*
@@ -45,7 +45,12 @@ static char usage_str[] =
  * (2) no-pids: creates an equivalent tree without restoring the original
  *   pids, assuming that the application can tolerate this. For this, the
  *   'cr_hdr_pids' array is transformed on-the-fly before it is handed to
- *   the restart syscall (using a helper process).
+ *   the restart syscall.
+ *
+ * To re-create the tasks tree in user space, 'mktree' reads the header and
+ * tree data from the checkpoint image tree. It makes up for the data that
+ * was consumed by using a helper process that provides the data back to
+ * the restart syscall, followed by the rest of the checkpoint image stream.
  */
 
 #ifdef CHECKPOINT_DEBUG
@@ -69,30 +74,31 @@ struct cr_ctx {
 	int pipe_out;
 	int pids_nr;
 	struct cr_hdr_pids *pids_arr;
+	char head[BUFSIZE];
+	char tree[BUFSIZE];
 	char buf[BUFSIZE];
 	struct args *args;
 };
 
-static int cr_mktree_pids(struct cr_ctx *ctx);
-static int cr_mktree_nopids(struct cr_ctx *ctx);
 static int cr_make_tree(struct cr_ctx *ctx, pid_t pid, int pos);
+static int cr_adjust_pids(struct cr_ctx *ctx);
 
 static void cr_abort(struct cr_ctx *ctx, char *str);
-static int cr_feeder(struct cr_ctx *ctx);
+static int cr_do_feeder(struct cr_ctx *ctx);
+static int cr_fork_feeder(struct cr_ctx *ctx);
+
 static int cr_write(int fd, void *buf, int count);
 static int cr_write_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf);
 
 static int cr_write_head(struct cr_ctx *ctx);
-static int cr_write_tree(struct cr_ctx *ctx,
-			 struct cr_hdr_pids *pids_arr, int pids_nr);
+static int cr_write_tree(struct cr_ctx *ctx);
 
 static int cr_read(int fd, void *buf, int count);
 static int cr_read_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf, int n);
 static int cr_read_obj_type(struct cr_ctx *ctx, void *buf, int n, int type);
 
 static int cr_read_head(struct cr_ctx *ctx);
-static int cr_read_tree(struct cr_ctx *ctx,
-			struct cr_hdr_pids **pids_arr, int *pids_nr);
+static int cr_read_tree(struct cr_ctx *ctx);
 
 struct pid_swap {
 	pid_t old;
@@ -120,7 +126,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	static char optc[] = "hpPv";
 
 	/* defaults */
-	args->pids = 1;
+	args->pids = 0;
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, NULL);
@@ -154,6 +160,11 @@ int main(int argc, char *argv[])
 
 	parse_args(&args, argc, argv);
 
+	if (args.pids) {
+		printf("mktree does not yet support '--pids' option");
+		exit(0);
+	}
+
 	ctx.init_pid = getpid();
 	ctx.args = &args;
 
@@ -165,95 +176,25 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 		
-	ret = cr_read_tree(&ctx, &ctx.pids_arr, &ctx.pids_nr);
+	ret = cr_read_tree(&ctx);
 	if (ret < 0) {
 		perror("read c/r tree");
 		exit(1);
 	}
 
-	if (args.pids)
-		ret = cr_mktree_pids(&ctx);
-	else
-		ret = cr_mktree_nopids(&ctx);
+	ret = cr_fork_feeder(&ctx);
+	if (ret < 0)
+		exit(1);
 
+	if (!args.pids)
+		ret = cr_make_tree(&ctx, ctx->pids_arr[0].vpid, 0);
+	else
+		ret = cr_make_tree(&ctx, getpid(), 0);
+
+	/* if all is well, won't reach here */
 	cr_dbg("c/r make tree failed ?\n");
 	return 1;
 }
-
-static int cr_mktree_pids(struct cr_ctx *ctx)
-{
-	return cr_make_tree(ctx, getpid(), 0);
-}
-
-/* else - no need to 'restore' original pids */
-static int cr_mktree_nopids(struct cr_ctx *ctx)
-{
-	int pipe_child[2];	/* children report status */
-	int pipe_feed[2];	/* feeder provides input */
-	int status, ret;
-	pid_t pid;
-
-	if (pipe(&pipe_child[0]) < 0 || pipe(&pipe_feed[0])) {
-		perror("pipe");
-		exit(1);
-	}
-
-	switch ((pid = fork())) {
-	case -1:
-		perror("fork");
-		exit(1);
-	default:
-		/* child pipe */
-		close(pipe_child[0]);
-		ctx->pipe_out = pipe_child[1];
-		/* feeder pipe */
-		close(pipe_feed[1]);
-		if (pipe_feed[0] != STDIN_FILENO) {
-			dup2(pipe_feed[0], STDIN_FILENO);
-			close(pipe_feed[0]);
-		}
-		/* collect child */
-		ret = waitpid(pid, &status, 0);
-		if (ret < 0) {
-			perror("pipe");
-			exit(1);
-		} else if (WIFSIGNALED(status)) {
-			fprintf(stderr, "feeder terminated with signal %d\n",
-				WTERMSIG(status));
-			exit(1);
-		} else if (WEXITSTATUS(status) != 0) {
-			fprintf(stderr, "feeder exited with bad status %d\n",
-				WEXITSTATUS(status));
-			exit(1);
-		}
-		/* won't return if all goes well */
-		ret = cr_make_tree(ctx, ctx->pids_arr[0].vpid, 0);
-		break;
-	case 0:
-		/* fork again so we don't need to be collected later */
-		if ((pid = fork()) < 0) {
-			perror("fork");
-			exit(1);
-		} else if (pid > 0) {
-			exit(0);
-		}
-		/* child pipe */
-		close(pipe_child[1]);
-		ctx->pipe_in = pipe_child[0];
-		/* feeder pipe */
-		close(pipe_feed[0]);
-		if (pipe_feed[1] != STDOUT_FILENO) {
-			dup2(pipe_feed[1], STDOUT_FILENO);
-			close(pipe_feed[1]);
-		}
-		/* won't return if all goes well */
-		ret = cr_feeder(ctx);
-		break;
-	}
-
-	return ret;
-}
-
 
 /*
  * cr_make_tree - create the tasks tree by recursively following the
@@ -311,6 +252,94 @@ static int cr_make_tree(struct cr_ctx *ctx, pid_t pid, int pos)
 	return ret;
 }
 
+/*
+ * cr_fork_feeder: create the feeder process and set a pipe to deliver
+ * the feeder's stdout to our stdin.
+ *
+ * If restart succeeds, we will never collect the feeder. Rather, we
+ * create a grandchild instead, to be collected by init(1).
+ *
+ * In '--no-pids' mode also setup another pipe through which new tasks
+ * will report their old- and new-pid (see cr_adjust_pids).
+ */
+static int cr_fork_feeder(struct cr_ctx *ctx)
+{
+	int pipe_child[2];	/* for children to report status */
+	int pipe_feed[2];	/* for feeder to provide input */
+	int status, ret;
+	int nopids;
+	pid_t pid;
+
+	nopids = !ctx->args->pids;
+
+	if (pipe(&pipe_feed[0])) {
+		perror("pipe");
+		exit(1);
+	}
+
+	if (nopids && pipe(&pipe_child[0]) < 0) {
+		perror("pipe");
+		exit(1);
+	}
+
+	switch ((pid = fork())) {
+	case -1:
+		perror("fork");
+		exit(1);
+	default:
+		/* children pipe (if --no-pids) */
+		if (nopids) {
+			close(pipe_child[0]);
+			ctx->pipe_out = pipe_child[1];
+		}
+		/* feeder pipe */
+		close(pipe_feed[1]);
+		if (pipe_feed[0] != STDIN_FILENO) {
+			dup2(pipe_feed[0], STDIN_FILENO);
+			close(pipe_feed[0]);
+		}
+		/* collect child */
+		ret = waitpid(pid, &status, 0);
+		if (ret < 0) {
+			perror("waitpid");
+			exit(1);
+		} else if (WIFSIGNALED(status)) {
+			fprintf(stderr, "feeder terminated with signal %d\n",
+				WTERMSIG(status));
+			exit(1);
+		} else if (WEXITSTATUS(status) != 0) {
+			fprintf(stderr, "feeder exited with bad status %d\n",
+				WEXITSTATUS(status));
+			exit(1);
+		}
+		break;
+	case 0:
+		/* fork again so we don't need to be collected later */
+		if ((pid = fork()) < 0) {
+			perror("fork");
+			exit(1);
+		} else if (pid > 0) {
+			exit(0);
+		}
+		/* children pipe (if --no-pids) */
+		if (nopids) {
+			close(pipe_child[1]);
+			ctx->pipe_in = pipe_child[0];
+		}
+		/* feeder pipe */
+		close(pipe_feed[0]);
+		if (pipe_feed[1] != STDOUT_FILENO) {
+			dup2(pipe_feed[1], STDOUT_FILENO);
+			close(pipe_feed[1]);
+		}
+		/* won't return if all goes well */
+		ret = cr_do_feeder(ctx);
+		break;
+	}
+
+	return ret;
+}
+
 static void cr_abort(struct cr_ctx *ctx, char *str)
 {
 	perror(str);
@@ -319,80 +348,24 @@ static void cr_abort(struct cr_ctx *ctx, char *str)
 }
 
 /*
- * Helper process to read in checkpoint image, transform the pids
- * array, struct cr_hdr_pids, on the fly and feed the result to the
- * "init" task of the restart 
- *
- * First, collect pids reported by the newly created tasks; each task
- * sends a 'struct pid_swap' indicating old- and new-pid. Modify a
- * copy of the pids array accordingly.
- *
- * Second, read in the checkpoint header (cr_hdr_head), and promptly
- * write it on the output.
- *
- * Third, read the task tree (cr_hdr_tree) and then, after verifying
- * that it is consistent with the original task tree previously read,
- * write the _modified_ pids array instead of the original.
- *
- * Finally, pass on the rest of the data by reading in chunks and
- * then writing them on the output.
+ * feeder process: delegates checkpoint image stream to the kernel.
+ * In '--no-pids' mode, transform the pids array (struct cr_hdr_pids)
+ * on the fly and feed the result to the "init" task of the restart
  */
-static int cr_feeder(struct cr_ctx *ctx)
+static int cr_do_feeder(struct cr_ctx *ctx)
 {
-	struct pid_swap swap;
-	struct cr_hdr_pids *pids_new;
-	struct cr_hdr_pids *pids_sav;
-	int pids_nr;
-	int n, m, ret;
+	int ret;
 
-	/* make a copy of the pids_arr */
-	pids_nr = ctx->pids_nr;
-	pids_new = malloc(sizeof(*pids_new) * pids_nr);
-	if (!pids_new)
-		cr_abort(ctx, "malloc");
-	memcpy(pids_new, ctx->pids_arr, sizeof(*pids_new) * pids_nr);
-
-	/* read in 'pid_swap' data and adjust pids_new array */
-	for (n = 0; n < pids_nr; n++) {
-		ret = read(ctx->pipe_in, &swap, sizeof(swap));
+	if (!ctx->args->pids) {
+		ret = cr_adjust_pids(ctx);
 		if (ret < 0)
-			cr_abort(ctx, "read pipe");
-		cr_dbg("c/r swap old %d new %d\n", swap.old, swap.new);
-		for (m = 0; m < pids_nr; m++) {
-			if (pids_new[m].vpid == swap.old)
-				pids_new[m].vpid = swap.new;
-			if (pids_new[m].vtgid == swap.old)
-				pids_new[m].vtgid = swap.new;
-			if (pids_new[m].vppid == swap.old)
-				pids_new[m].vppid = swap.new;
-		}
+			return ret;
 	}
 
-	close(ctx->pipe_in);
-
-	/* read head -> and write */
-	if (cr_read_head(ctx) < 0)
-		cr_abort(ctx, "read c/r head");
 	if (cr_write_head(ctx) < 0)
 		cr_abort(ctx, "write c/r head");
 
-	/* read tree again */
-	pids_sav = ctx->pids_arr;
-	if (cr_read_tree(ctx, &ctx->pids_arr, &ctx->pids_nr) < 0)
-		cr_abort(ctx, "read c/r tree");
-
-	/* verify that second tree is identical to saved one */
-	if (ctx->pids_nr != pids_nr)
-		cr_abort(ctx, "tasks_nr mismatch");
-	for (n = 0; n < pids_nr; n++) {
-		if (ctx->pids_arr[n].vpid != pids_sav[n].vpid ||
-		    ctx->pids_arr[n].vtgid != pids_sav[n].vtgid ||
-		    ctx->pids_arr[n].vppid != pids_sav[n].vppid)
-			cr_abort(ctx, "pids_arr mismatch");
-	}
-
-	/* and write modified tree */
-	if (cr_write_tree(ctx, pids_new, pids_nr) < 0)
+	if (cr_write_tree(ctx) < 0)
 		cr_abort(ctx, "write c/r tree");
 
 	/* read rest -> write rest */
@@ -410,6 +383,39 @@ static int cr_feeder(struct cr_ctx *ctx)
 
 	/* all is well - we are expected to terminate */
 	exit(0);
+}
+
+/*
+ * cr_adjust_pids: transform the pids array (struct cr_hdr_pids) by
+ * substituing actual pid values for original pid values.
+ *
+ * Collect pids reported by the newly created tasks; each task sends
+ * a 'struct pid_swap' indicating old- and new-pid. Then modify the
+ * the pids array accordingly.
+ */
+static int cr_adjust_pids(struct cr_ctx *ctx)
+{
+	struct pid_swap swap;
+	int n, m, ret;
+
+	/* read in 'pid_swap' data and adjust ctx->pids_arr */
+	for (n = 0; n < ctx->pids_nr; n++) {
+		ret = read(ctx->pipe_in, &swap, sizeof(swap));
+		if (ret < 0)
+			cr_abort(ctx, "read pipe");
+		cr_dbg("c/r swap old %d new %d\n", swap.old, swap.new);
+		for (m = 0; m < ctx->pids_nr; m++) {
+			if (ctx->pids_arr[m].vpid == swap.old)
+				ctx->pids_arr[m].vpid = swap.new;
+			if (ctx->pids_arr[m].vtgid == swap.old)
+				ctx->pids_arr[m].vtgid = swap.new;
+			if (ctx->pids_arr[m].vppid == swap.old)
+				ctx->pids_arr[m].vppid = swap.new;
+		}
+	}
+
+	close(ctx->pipe_in);
+	return 0;
 }
 
 /*
@@ -512,11 +518,13 @@ static int cr_read_head(struct cr_ctx *ctx)
 
 	/* FIXME: skip version validation for now */
 
+	/* save a copy of header */
+	memcpy(ctx->head, ctx->buf, BUFSIZE);
+
 	return 0;
 }
 
-static int cr_read_tree(struct cr_ctx *ctx,
-			struct cr_hdr_pids **pids_arr, int *pids_nr)
+static int cr_read_tree(struct cr_ctx *ctx)
 {
 	struct cr_hdr *h = (struct cr_hdr *) ctx->buf;
 	struct cr_hdr_tree *hh = (struct cr_hdr_tree *) (h + 1);
@@ -537,13 +545,16 @@ static int cr_read_tree(struct cr_ctx *ctx,
 		return -1;
 	}
 
-	*pids_nr = hh->tasks_nr;
-	*pids_arr = malloc(sizeof(**pids_arr) * (*pids_nr));
-	if (!*pids_arr)
+	/* save a copy of header */
+	memcpy(ctx->tree, ctx->buf, BUFSIZE);
+
+	ctx->pids_nr = hh->tasks_nr;
+	ctx->pids_arr = malloc(sizeof(*ctx->pids_arr) * (ctx->pids_nr));
+	if (!ctx->pids_arr)
 		return -1;
 
-	return cr_read(STDIN_FILENO, *pids_arr,
-		       sizeof(**pids_arr) * (*pids_nr));
+	return cr_read(STDIN_FILENO, ctx->pids_arr,
+		       sizeof(*ctx->pids_arr) * ctx->pids_nr);
 }
 
 static int cr_write_head(struct cr_ctx *ctx)
@@ -551,23 +562,23 @@ static int cr_write_head(struct cr_ctx *ctx)
 	struct cr_hdr *h;
 	struct cr_hdr_head *hh;
 
-	h = (struct cr_hdr *) ctx->buf;
+	h = (struct cr_hdr *) ctx->head;
 	hh = (struct cr_hdr_head *) (h + 1);
 	return cr_write_obj(ctx, h, hh);
 }
 
-static int cr_write_tree(struct cr_ctx *ctx,
-			 struct cr_hdr_pids *pids_arr, int pids_nr)
+static int cr_write_tree(struct cr_ctx *ctx)
 {
 	struct cr_hdr *h;
 	struct cr_hdr_head *hh;
 
-	h = (struct cr_hdr *) ctx->buf;
+	h = (struct cr_hdr *) ctx->tree;
 	hh = (struct cr_hdr_head *) (h + 1);
 	if (cr_write_obj(ctx, h, hh) < 0)
 		cr_abort(ctx, "write tree");
 
-	if (cr_write(STDOUT_FILENO, pids_arr, sizeof(*pids_arr) * pids_nr) < 0)
+	if (cr_write(STDOUT_FILENO, ctx->pids_arr,
+		     sizeof(*ctx->pids_arr) * ctx->pids_nr) < 0)
 		cr_abort(ctx, "write pids");
 
 	return 0;
