@@ -75,6 +75,7 @@ struct cr_ctx {
 	int pids_nr;
 	struct cr_hdr_pids *pids_arr;
 	char head[BUFSIZE];
+	char head_arch[BUFSIZE];
 	char tree[BUFSIZE];
 	char buf[BUFSIZE];
 	struct args *args;
@@ -91,6 +92,7 @@ static int cr_write(int fd, void *buf, int count);
 static int cr_write_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf);
 
 static int cr_write_head(struct cr_ctx *ctx);
+static int cr_write_head_arch(struct cr_ctx *ctx);
 static int cr_write_tree(struct cr_ctx *ctx);
 
 static int cr_read(int fd, void *buf, int count);
@@ -98,6 +100,7 @@ static int cr_read_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf, int n);
 static int cr_read_obj_type(struct cr_ctx *ctx, void *buf, int n, int type);
 
 static int cr_read_head(struct cr_ctx *ctx);
+static int cr_read_head_arch(struct cr_ctx *ctx);
 static int cr_read_tree(struct cr_ctx *ctx);
 
 struct pid_swap {
@@ -176,6 +179,12 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 		
+	ret = cr_read_head_arch(&ctx);
+	if (ret < 0) {
+		perror("read c/r head");
+		exit(1);
+	}
+
 	ret = cr_read_tree(&ctx);
 	if (ret < 0) {
 		perror("read c/r tree");
@@ -187,7 +196,7 @@ int main(int argc, char *argv[])
 		exit(1);
 
 	if (!args.pids)
-		ret = cr_make_tree(&ctx, ctx->pids_arr[0].vpid, 0);
+		ret = cr_make_tree(&ctx, ctx.pids_arr[0].vpid, 0);
 	else
 		ret = cr_make_tree(&ctx, getpid(), 0);
 
@@ -365,6 +374,9 @@ static int cr_do_feeder(struct cr_ctx *ctx)
 	if (cr_write_head(ctx) < 0)
 		cr_abort(ctx, "write c/r head");
 
+	if (cr_write_head_arch(ctx) < 0)
+		cr_abort(ctx, "write c/r head");
+
 	if (cr_write_tree(ctx) < 0)
 		cr_abort(ctx, "write c/r tree");
 
@@ -524,6 +536,26 @@ static int cr_read_head(struct cr_ctx *ctx)
 	return 0;
 }
 
+static int cr_read_head_arch(struct cr_ctx *ctx)
+{
+	struct cr_hdr *h = (struct cr_hdr *) ctx->buf;
+	struct cr_hdr_head_arch *hh = (struct cr_hdr_head_arch *) (h + 1);
+	int parent;
+
+	parent = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_HEAD_ARCH);
+	if (parent < 0)
+		return parent;
+	else if (parent != 0) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	/* save a copy of header */
+	memcpy(ctx->head_arch, ctx->buf, BUFSIZE);
+
+	return 0;
+}
+
 static int cr_read_tree(struct cr_ctx *ctx)
 {
 	struct cr_hdr *h = (struct cr_hdr *) ctx->buf;
@@ -564,6 +596,16 @@ static int cr_write_head(struct cr_ctx *ctx)
 
 	h = (struct cr_hdr *) ctx->head;
 	hh = (struct cr_hdr_head *) (h + 1);
+	return cr_write_obj(ctx, h, hh);
+}
+
+static int cr_write_head_arch(struct cr_ctx *ctx)
+{
+	struct cr_hdr *h;
+	struct cr_hdr_head_arch *hh;
+
+	h = (struct cr_hdr *) ctx->head_arch;
+	hh = (struct cr_hdr_head_arch *) (h + 1);
 	return cr_write_obj(ctx, h, hh);
 }
 
