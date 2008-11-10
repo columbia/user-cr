@@ -1,3 +1,13 @@
+/*
+ *  self.c: demonstrate self-checkpoint
+ *
+ *  Copyright (C) 2008 Oren Laadan
+ *
+ *  This file is subject to the terms and conditions of the GNU General Public
+ *  License.  See the file COPYING in the main directory of the Linux
+ *  distribution for more details.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,7 +16,7 @@
 #include <math.h>
 #include <sys/syscall.h>
 
-#define OUTFILE  "/tmp/cr-test.out"
+#define OUTFILE  "/tmp/cr-self.out"
 
 int main(int argc, char *argv[])
 {

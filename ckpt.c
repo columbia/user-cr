@@ -1,3 +1,13 @@
+/*
+ *  ckpt.c: checkpoint one or multiple processes
+ *
+ *  Copyright (C) 2008 Oren Laadan
+ *
+ *  This file is subject to the terms and conditions of the GNU General Public
+ *  License.  See the file COPYING in the main directory of the Linux
+ *  distribution for more details.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
