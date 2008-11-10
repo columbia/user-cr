@@ -3,11 +3,11 @@
 DEBUG = -DCHECKPOINT_DEBUG
 
 # find linux architecure
-KERN_ARCH = $(shell readlink ../linux-2.6-orenl/include/asm | sed 's/^asm-//')
+KERN_ARCH = $(shell readlink ../linux/include/asm | sed 's/^asm-//')
 
 # look for includes
-PATHS = -I../linux-2.6-orenl/include \
-	-I../linux-2.6-orenl/arch/$(KERN_ARCH)/include
+PATHS = -I../linux/include \
+	-I../linux/arch/$(KERN_ARCH)/include
 
 # extra warnings and fun
 WARNS := -Wall -Wstrict-prototypes -Wno-trigraphs
