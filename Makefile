@@ -16,7 +16,7 @@ WARNS := -Wall -Wstrict-prototypes -Wno-trigraphs
 CFLAGS += -g $(WARNS) $(PATHS) $(DEBUG)
 
 PROGS =	self ckpt rstr mktree
-TESTS=	test1 test2
+TESTS=	test1 test2 test3 test4
 
 LDLIBS = -lm
 
@@ -29,6 +29,8 @@ rstr:	rstr.o
 
 test1:	test1.c
 test2:	test2.c
+test3:	test3.c
+test4:	test4.c
 
 clean:
 	@rm -f $(PROGS) $(TESTS) *~ *.o

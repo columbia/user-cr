@@ -33,3 +33,5 @@ TEST PROGRAMS:
 
 test1.c: a simple test program for c/r (single process)
 test2.c: a simple test program for c/r (multiple processes)
+test3.c: test multiple processes with large memory allocation
+test4.c: test multiple processes that also use pipes

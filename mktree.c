@@ -55,7 +55,7 @@ static char usage_str[] =
 
 #ifdef CHECKPOINT_DEBUG
 #define cr_dbg(format, args...)  \
-	fprintf(stderr, "[%d]" format, getpid(), ##args)
+	fprintf(stderr, "<%d>" format, getpid(), ##args)
 #endif
 
 #define cr_err(...)  \
@@ -207,7 +207,7 @@ int main(int argc, char *argv[])
 
 /*
  * cr_make_tree - create the tasks tree by recursively following the
- * "instruction" give in the 'struct cr_hdr_pids' array
+ * "instructions" given in the 'struct cr_hdr_pids' array
  *
  * @pid is our own pid
  * @pos is the current position in the array 
@@ -226,6 +226,7 @@ static int cr_make_tree(struct cr_ctx *ctx, pid_t pid, int pos)
 		cr_dbg("forking entry[%d].vpid = %d\n",
 		       pos, ctx->pids_arr[pos - 1].vpid);
 
+		/* FIXME: in 'pids' we need to call fork_with_pid() */
 		child = fork();
 		switch (child) {
 		case -1:
