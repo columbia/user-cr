@@ -409,26 +409,48 @@ static int cr_do_feeder(struct cr_ctx *ctx)
  */
 static int cr_adjust_pids(struct cr_ctx *ctx)
 {
+	struct cr_hdr_pids *copy_arr;
 	struct pid_swap swap;
-	int n, m, ret;
+	int n, m, copy_len, ret;
+
+	/*
+	 * Make a copy of the original array to fix a nifty bug where
+	 * two tasks in original image with pids A, B, restart with
+	 * pids swapped (B and A), for instance -
+	 *    original pid array:    [][][A][][B][]...
+	 *    first, swap B with A:  [][][A][][A][]...
+	 *    then, swap A with B:   [][][B][][B][]...
+	 *    but correct should be: [][][B][][A][]...
+	 */
+
+	copy_len = sizeof(*copy_arr) * ctx->pids_nr;
+	copy_arr = malloc(copy_len);
+	if (!copy_arr)
+		cr_abort(ctx, "malloc copy pids");
+	memcpy(copy_arr, ctx->pids_arr, copy_len);
 
 	/* read in 'pid_swap' data and adjust ctx->pids_arr */
 	for (n = 0; n < ctx->pids_nr; n++) {
 		ret = read(ctx->pipe_in, &swap, sizeof(swap));
-		if (ret < 0)
+		if (ret < 0) {
+			free(copy_arr);
 			cr_abort(ctx, "read pipe");
+		}
 		cr_dbg("c/r swap old %d new %d\n", swap.old, swap.new);
 		for (m = 0; m < ctx->pids_nr; m++) {
 			if (ctx->pids_arr[m].vpid == swap.old)
-				ctx->pids_arr[m].vpid = swap.new;
+				copy_arr[m].vpid = swap.new;
 			if (ctx->pids_arr[m].vtgid == swap.old)
-				ctx->pids_arr[m].vtgid = swap.new;
+				copy_arr[m].vtgid = swap.new;
 			if (ctx->pids_arr[m].vppid == swap.old)
-				ctx->pids_arr[m].vppid = swap.new;
+				copy_arr[m].vppid = swap.new;
 		}
 	}
 
+	memcpy(ctx->pids_arr, copy_arr, copy_len);
+
 	close(ctx->pipe_in);
+	free(copy_arr);
 	return 0;
 }
 
