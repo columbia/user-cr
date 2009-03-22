@@ -524,8 +524,10 @@ static int cr_read_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf, int n)
 	ret = cr_read(STDIN_FILENO, h, sizeof(*h));
 	if (ret < 0)
 		return ret;
-	if (h->len > n)
-		return -EINVAL;
+	if (h->len > n) {
+		errno = EINVAL;
+		return -1;
+	}
 	return cr_read(STDIN_FILENO, buf, h->len);
 }
 
@@ -553,25 +555,30 @@ static int cr_read_head(struct cr_ctx *ctx)
 {
 	struct cr_hdr_head *hh;
 	char *ptr;
-	int len, ret;
+	int ret;
 
 	hh = (struct cr_hdr_head *) ctx->head;;
 	ret = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_HEAD);
 	if (ret < 0)
 		return ret;
 
-	len = hh->uts_len;
-	if (len < 0 || len > BUFSIZE / 4)
-		return -EINVAL;
-	ptr = (char *) (hh + 1);
+	if (hh->uts_release_len > BUFSIZE / 4 ||
+	    hh->uts_version_len > BUFSIZE / 4 ||
+	    hh->uts_machine_len > BUFSIZE / 4) {
+		errno = EINVAL;
+		return -1;
+	}
 
-	ret = cr_read_obj_buffer(ctx, ptr, len);
+	ptr = (char *) (hh + 1);
+	ret = cr_read_obj_buffer(ctx, ptr, hh->uts_release_len);
 	if (ret < 0)
 		return ret;
-	ret = cr_read_obj_buffer(ctx, ptr + len, len);
+	ptr += hh->uts_release_len;
+	ret = cr_read_obj_buffer(ctx, ptr, hh->uts_version_len);
 	if (ret < 0)
 		return ret;
-	ret = cr_read_obj_buffer(ctx, ptr + 2*len, len);
+	ptr += hh->uts_version_len;
+	ret = cr_read_obj_buffer(ctx, ptr, hh->uts_machine_len);
 	if (ret < 0)
 		return ret;
 
@@ -627,7 +634,7 @@ static int cr_write_head(struct cr_ctx *ctx)
 	struct cr_hdr h;
 	struct cr_hdr_head *hh;
 	char *ptr;
-	int len, ret;
+	int ret;
 
 	h.type = CR_HDR_HEAD;
 	h.len = sizeof(*hh);
@@ -636,16 +643,16 @@ static int cr_write_head(struct cr_ctx *ctx)
 	if (ret < 0)
 		return ret;
 
-	len = hh->uts_len;
 	ptr = (char *) (hh + 1);
-
-	ret = cr_write_obj_buffer(ctx, ptr, len);
+	ret = cr_write_obj_buffer(ctx, ptr, hh->uts_release_len);
 	if (ret < 0)
 		return ret;
-	ret = cr_write_obj_buffer(ctx, ptr + len, len);
+	ptr += hh->uts_release_len;
+	ret = cr_write_obj_buffer(ctx, ptr, hh->uts_version_len);
 	if (ret < 0)
 		return ret;
-	ret = cr_write_obj_buffer(ctx, ptr + 2*len, len);
+	ptr += hh->uts_version_len;
+	ret = cr_write_obj_buffer(ctx, ptr, hh->uts_machine_len);
 
 	return ret;
 }
