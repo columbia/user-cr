@@ -1,18 +1,24 @@
 /*
  *  mktree.c: restart of multiple processes
  *
- *  Copyright (C) 2008 Oren Laadan
+ *  Copyright (C) 2008-2009 Oren Laadan
  *
  *  This file is subject to the terms and conditions of the GNU General Public
  *  License.  See the file COPYING in the main directory of the Linux
  *  distribution for more details.
  */
 
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <errno.h>
+#include <getopt.h>
+#include <limits.h>
+#include <unistd.h>
+#include <sched.h>
+#include <pthread.h>
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -20,10 +26,6 @@
 #include <sys/syscall.h>
 
 #include <linux/checkpoint_hdr.h>
-
-#define _GNU_SOURCE
-#include <getopt.h>
-#undef _GNU_SOURCE
 
 static char usage_str[] =
 "usage: mktree [opts]\n"
@@ -68,12 +70,55 @@ inline static int restart(int crid, int fd, unsigned long flags)
 
 #define BUFSIZE  (4 * 4096)
 
+struct hashent {
+	long key;
+	void *data;
+	struct hashent *next;
+};
+
+struct task;
+struct cr_ctx;
+
+struct task {
+	int flags;		/* state and (later) actions */
+
+	struct task *children;	/* pointers to first child, next and prev */
+	struct task *next_sib;	/*   sibling, and the creator of a process */
+	struct task *prev_sib;
+	struct task *creator;
+
+	struct task *phantom;	/* pointer to place-holdler task (if any) */
+
+	pid_t pid;		/* process IDs, our bread-&-butter */
+	pid_t ppid;
+	pid_t tgid;
+	pid_t sid;
+	
+	pid_t rpid;		/* [restart without vpids] actual (real) pid */
+
+	struct cr_ctx *ctx;	/* points back to the c/r context */
+};
+
+#define TASK_DEAD	0x1	/* */
+#define TASK_THREAD	0x2	/* */
+#define TASK_SIBLING	0x4	/* */
+#define TASK_SESSION	0x8	/* */
+
 struct cr_ctx {
 	pid_t init_pid;
 	int pipe_in;
 	int pipe_out;
 	int pids_nr;
+
 	struct cr_hdr_pids *pids_arr;
+
+	struct task *tasks_arr;
+	int tasks_nr;
+	int tasks_max;
+	int tasks_pid;
+
+	struct hashent **hash_arr;
+	
 	char head[BUFSIZE];
 	char head_arch[BUFSIZE];
 	char tree[BUFSIZE];
@@ -81,7 +126,14 @@ struct cr_ctx {
 	struct args *args;
 };
 
-static int cr_make_tree(struct cr_ctx *ctx, pid_t pid, int pos);
+static int cr_build_tree(struct cr_ctx *ctx);
+static int cr_init_tree(struct cr_ctx *ctx);
+static int cr_set_creator(struct cr_ctx *ctx, struct task *task);
+static int cr_placeholder_task(struct cr_ctx *ctx, struct task *task);
+static int cr_propagate_session(struct cr_ctx *ctx, struct task *session);
+
+static int cr_make_tree(struct cr_ctx *ctx, struct task *task);
+static int cr_fork_child(struct cr_ctx *ctx, struct task *child);
 static int cr_adjust_pids(struct cr_ctx *ctx);
 
 static void cr_abort(struct cr_ctx *ctx, char *str);
@@ -103,6 +155,11 @@ static int cr_read_obj_type(struct cr_ctx *ctx, void *buf, int n, int type);
 static int cr_read_head(struct cr_ctx *ctx);
 static int cr_read_head_arch(struct cr_ctx *ctx);
 static int cr_read_tree(struct cr_ctx *ctx);
+
+static int hash_init(struct cr_ctx *ctx);
+static void hash_exit(struct cr_ctx *ctx);
+static int hash_insert(struct cr_ctx *ctx, long key, void *data);
+static void *hash_lookup(struct cr_ctx *ctx, long key);
 
 struct pid_swap {
 	pid_t old;
@@ -162,6 +219,9 @@ int main(int argc, char *argv[])
 	memset(&ctx, 0, sizeof(ctx));
 	memset(&args, 0, sizeof(args));
 
+	if (hash_init(&ctx) < 0)
+		exit(1);
+
 	parse_args(&args, argc, argv);
 
 	if (args.pids) {
@@ -196,61 +256,503 @@ int main(int argc, char *argv[])
 	if (ret < 0)
 		exit(1);
 
-	if (!args.pids)
-		ret = cr_make_tree(&ctx, ctx.pids_arr[0].vpid, 0);
-	else
-		ret = cr_make_tree(&ctx, getpid(), 0);
+	/* build creator-child-relationship tree */
+	ret = cr_build_tree(&ctx);
+	if (ret < 0)
+		exit(1);
+
+	hash_exit(&ctx);
+
+	ret = cr_make_tree(&ctx, &ctx.tasks_arr[0]);
 
 	/* if all is well, won't reach here */
 	cr_dbg("c/r make tree failed ?\n");
 	return 1;
 }
 
-/*
- * cr_make_tree - create the tasks tree by recursively following the
- * "instructions" given in the 'struct cr_hdr_pids' array
- *
- * @pid is our own pid
- * @pos is the current position in the array 
- */
-static int cr_make_tree(struct cr_ctx *ctx, pid_t pid, int pos)
+static inline struct task *cr_init_task(struct cr_ctx *ctx)
 {
-	struct pid_swap swap;
-	pid_t child;
-	int ret;
+	return (&ctx->tasks_arr[0]);
+}
 
-	while (pos < ctx->pids_nr) {
-		/* skip if this is not my child */
-		if (ctx->pids_arr[pos++].vppid != pid)
+/*
+ * cr_build_tree - build the task tree data structure which provides
+ * the "instructions" to re-create the task tree
+ */
+static int cr_build_tree(struct cr_ctx *ctx)
+{
+	struct task *task;
+	int i;
+
+	/*
+	 * Allow for additional tasks to be added on demans for
+	 * referenced pids of dead tasks (each task can introduce at
+	 * most two: session and process group IDs), as well as for
+	 * placeholder tasks (each session id may have at most one)
+	 */
+	ctx->tasks_max = ctx->pids_nr * 4;
+	ctx->tasks_arr = malloc(sizeof(*ctx->tasks_arr) * ctx->tasks_max);
+	if (!ctx->tasks_arr) {
+		perror("malloc tasks array");
+		return -1;
+	}
+
+	/* initialize tree */
+	if (cr_init_tree(ctx) < 0) {
+		free(ctx->tasks_arr);
+		ctx->tasks_arr = NULL;
+		return -1;
+	}
+
+	/* assign a creator to each task */
+	for (i = 0; i < ctx->tasks_nr; i++) {
+		task = &ctx->tasks_arr[i];
+		if (task->creator)
 			continue;
-
-		cr_dbg("forking entry[%d].vpid = %d\n",
-		       pos, ctx->pids_arr[pos - 1].vpid);
-
-		/* FIXME: in 'pids' we need to call fork_with_pid() */
-		child = fork();
-		switch (child) {
-		case -1:
+		if (cr_set_creator(ctx, task) < 0) {
+			free(ctx->tasks_arr);
+			ctx->tasks_arr = NULL;
 			return -1;
-		case 0:
-			/* child proceeds recursively from @pos */
-			pid = ctx->pids_arr[pos - 1].vpid;
-			return cr_make_tree(ctx, pid, pos);
-		default:
-			break;
 		}
 	}
 
-	/* in 'no-pids' mode we need to report old/new pids via pipe */
+#ifdef CHECKPOINT_DEBUG
+	for (i = 0; i < ctx->tasks_nr; i++) {
+		task = &ctx->tasks_arr[i];
+		cr_dbg("pid %d ppid %d sid %d creator %d",
+		       task->pid, task->ppid, task->sid,
+		       task->creator ? task->creator->pid : 0);
+		if (task->next_sib)
+			cr_dbg(" next %d", task->next_sib->pid);
+		if (task->prev_sib)
+			cr_dbg(" prev %d", task->prev_sib->pid);
+		if (task->phantom)
+			cr_dbg(" placeholder %d", task->phantom->pid);
+		if (task->flags & TASK_DEAD)
+			cr_dbg(" D");
+		cr_dbg(" %c%c%c%c",
+		       (task->flags & TASK_THREAD) ? 'T' : ' ',
+		       (task->flags & TASK_SIBLING) ? 'P' : ' ',
+		       (task->flags & TASK_SESSION) ? 'S' : ' ',
+		       (task->flags & TASK_DEAD) ? 'D' : ' ');
+		cr_dbg("\n");
+	}
+#endif
 
+	return 0;
+}		
+
+static int cr_setup_task(struct cr_ctx *ctx, pid_t pid)
+{
+	struct task *task;
+
+	if (hash_lookup(ctx, pid))
+		return 0;
+
+	task = &ctx->tasks_arr[ctx->tasks_nr++];
+
+	task->flags = TASK_DEAD;
+
+	task->pid = pid;
+	task->ppid = cr_init_task(ctx)->pid;
+	task->tgid = pid;
+	task->sid = pid;
+
+	task->children = NULL;
+	task->next_sib = NULL;
+	task->prev_sib = NULL;
+	task->creator = NULL;
+
+	task->rpid = -1;
+	task->ctx = ctx;
+
+	if (hash_insert(ctx, pid, task) < 0)
+		return -1;
+
+	/* remember the max pid seen */
+	if (task->pid > ctx->tasks_pid)
+		ctx->tasks_pid = task->pid;
+
+	return 0;
+}
+
+static int cr_init_tree(struct cr_ctx *ctx)
+{
+	struct task *task;
+	int i;
+
+	/* populate with known tasks */
+	for (i = 0; i < ctx->pids_nr; i++) {
+		task = &ctx->tasks_arr[i];
+
+		task->flags = 0;
+
+		task->pid = ctx->pids_arr[i].vpid;
+		task->ppid = ctx->pids_arr[i].vppid;
+		task->tgid = ctx->pids_arr[i].vtgid;
+		task->sid = ctx->pids_arr[i].vsid;
+
+		task->children = NULL;
+		task->next_sib = NULL;
+		task->prev_sib = NULL;
+		task->creator = NULL;
+
+		task->rpid = -1;
+		task->ctx = ctx;
+
+		if (hash_insert(ctx, task->pid, task) < 0)
+			return -1;
+	}
+
+	ctx->tasks_nr = ctx->pids_nr;
+
+	/* add pids unaccounted for (no tasks) */
+	for (i = 0; i < ctx->pids_nr; i++) {
+		task = &ctx->tasks_arr[i];
+		if (cr_setup_task(ctx, ctx->pids_arr[i].vsid) < 0)
+			return -1;
+		if (cr_setup_task(ctx, ctx->pids_arr[i].vpgid) < 0)
+			return -1;
+	}
+
+	return 0;
+}
+
+/*
+ * Algorithm DumpForest
+ * "Transparent Checkpoint/Restart of Multiple Processes on Commodity
+ * Operating Systems" in USENIX 2007
+ * http://www.usenix.org/events/usenix07/tech/full_papers/laadan/laadan_html/paper.html
+ *
+ * The algorithm captures the state of the task forest. It considers
+ * all pid values, even of dead tasks (appearing in sid/pgid of other
+ * tasks). The input is a table with all pids; the output is a tree
+ * structure imposed on that table. The goal of is to determine the
+ * creating parent (creator) of each task. At restart, the init task
+ * will recursively create the remaining tasks as instructed by the
+ * table.
+ *
+ * Each entry in the table consists of the following set of fields:
+ * flags, pid, tgid, sid, pgid, and pointers to the a creator, next
+ * and previous sibling, and first child task. Note that the creator
+ * may not necessarily correspond to the parent. The possible flags
+ * are TASK_DEAD, TASK_THREAD, TASK_SESSION (that asks inherit a
+ * session id), and TASK_SIBLING (that asks to inherit the parent via
+ * CLONE_PARENT). The algorithm loops through all the entries in the
+ * table:
+ *
+ * If the entry is a thread and not the thread group leader, we set
+ * the creator to be the thread group leader and set TASK_THREAD.
+ *
+ * Otherwise, if the entry is a session leader, it must have called
+ * setsid(), and does not need to inherit its session. The creator is
+ * set to its real parent.
+ *
+ * Otherwise, if the entry is a dead task (no current task exists
+ * with the given pid), the only constraint is that it inherit the
+ * correct session id. The session leader is set as its creator.
+ *
+ * Otherwise, if the entry is an orphan task, it cannot inherit the
+ * correct session id from init. We add a placeholder task in the
+ * table whose function on restart is to inherit the session id from
+ * the session leader, create the task, then terminate so that the
+ * task will be orphaned. The placeholder is given an arbitrary pid
+ * not already in the table, and the sid identifying the session, and
+ * is marked TASK_DEAD.
+ *
+ * Otherwise, if the entry's sid is equal to its parent's, the only
+ * constraint is that it inherit the correct session id from its
+ * parent. This is simply done by setting its parent as its creator.
+ *
+ * Otherwise, the entry corresponds to a task which is not a session
+ * leader, does not share the session id with its parent, and hence
+ * whose session id must be inherited from an ancestor further up the
+ * tree forest. The task was forked by its parent before the parent
+ * changed its own sid. Its creator is set to be its parent, and it is
+ * marked TASK_SESSION. This flag is propagated up its ancestry until
+ * reaching an entry with that session id. This ensures that the sid
+ * correctly descend via inheritance to the current entry.
+ *
+ * If the traversal fails to find an entry with the same sid, it will
+ * stop at an entry of a leader of another session. This entry must
+ * have formerly been a descendant of the original session leader.
+ * Its creator will have already been set init.  Because we now know
+ * that it needs to pass the original sid to its own descendants, we
+ * re-parent the entry to become a descendant of the original session
+ * leader.  This is done using a placeholder in a manner similar to
+ * how we handle orphans that are not session leaders.
+ */
+static int cr_set_creator(struct cr_ctx *ctx, struct task *task)
+{
+	struct task *session = hash_lookup(ctx, task->sid);
+	struct task *parent = hash_lookup(ctx, task->ppid);
+	struct task *creator;
+
+	if (task == cr_init_task(ctx)) {
+		cr_err("pid %d: init - no creator\n", cr_init_task(ctx)->pid);
+		return -1;
+	}
+
+	if (task->tgid != task->pid) {
+		/* thread: creator is thread-group-leader */
+		cr_dbg("pid %d: thread tgid %d\n", task->pid, task->tgid);
+		creator = hash_lookup(ctx, task->tgid);
+		task->flags |= TASK_THREAD;
+	} else if (task->pid == task->sid) {
+		/* session leader: creator is parent */
+		cr_dbg("pid %d: session leader\n", task->pid);
+		creator = parent;
+	} else if (task->flags & TASK_DEAD) {
+		/* dead: creator is session leader */
+		cr_dbg("pid %d: task is dead\n", task->pid);
+		creator = session;
+	} else if (task->ppid == 1) {
+		/* (non-session-leader) orphan: creator is dummy */
+		cr_dbg("pid %d: orphan session %d\n", task->pid, task->sid);
+		if (!session->phantom)
+			if (cr_placeholder_task(ctx, task) < 0)
+				return -1;
+		creator = session->phantom;
+	} else if (task->sid == parent->sid) {
+		/* (non-session-leader) inherit: creator is parent */
+		cr_dbg("pid %d: inherit sid %d\n", task->pid, task->sid);
+		creator = parent;
+	} else {
+		/* first make sure we know the session's creator */
+		if (!session->creator && session != cr_init_task(ctx)) {
+			/* (non-session-leader) recursive: session's creator */
+			cr_dbg("pid %d: recursive session creator %d\n",
+			       task->pid, task->sid);
+			if (cr_set_creator(ctx, session) < 0)
+				return -1;
+		}
+		/* then use it to decide what to do */
+		if (session->creator->pid == task->ppid) {
+			/* init must not be sibling creator (CLONE_PARENT) */
+			if (session == cr_init_task(ctx)) {
+				cr_err("pid %d: sibling session prohibited"
+				       " with init as creator\n", task->pid);
+				return -1;
+			}
+			/* (non-session-leader) sibling: creator is sibling */
+			cr_dbg("pid %d: sibling session %d\n",
+			       task->pid, task->sid);
+			creator = session;
+			task->flags |= TASK_SIBLING;
+		} else {
+			/* (non-session-leader) session: fork before setsid */
+			cr_dbg("pid %d: propagate session %d\n",
+			       task->pid, task->sid);
+			creator = parent;
+			task->flags |= TASK_SESSION;
+		}
+	}
+
+	if (creator->children) {
+		struct task *next = creator->children;
+
+		task->next_sib = next;
+		next->prev_sib = task;
+	}
+
+	cr_dbg("pid %d: creator set to %d\n", task->pid, creator->pid);
+	task->creator = creator;
+	creator->children = task;
+
+	if (task->flags & TASK_SESSION)
+		if (cr_propagate_session(ctx, task) < 0)
+			return -1;
+
+	return 0;
+}
+
+static int cr_placeholder_task(struct cr_ctx *ctx, struct task *task)
+{
+	struct task *session = hash_lookup(ctx, task->sid);
+	struct task *holder = &ctx->tasks_arr[ctx->tasks_nr++];
+
+	if (ctx->tasks_nr > ctx->tasks_max) {
+		/* shouldn't happen, beacuse we prepared enough */
+		cr_err("out of space in task table !");
+		return -1;
+	}
+
+	/*
+	 * allocate an unused pid for the placeholder
+	 * (this will become inefficient if pid-space is exhausted)
+	 */
+	do {
+		if (ctx->tasks_pid == INT_MAX)
+			ctx->tasks_pid = 2;
+		else
+			ctx->tasks_pid++;
+	} while (hash_lookup(ctx, ctx->tasks_pid));
+
+	holder->flags = TASK_DEAD;
+
+	holder->pid = ctx->tasks_pid;
+	holder->ppid = cr_init_task(ctx)->pid;
+	holder->tgid = holder->pid;
+	holder->sid = task->sid;
+
+	holder->children = NULL;
+	holder->next_sib = NULL;
+	holder->prev_sib = NULL;
+	holder->creator = NULL;
+
+	holder->rpid = -1;
+	holder->ctx = ctx;
+
+	holder->creator = session;
+	if (session->children) {
+		holder->next_sib = session->children;
+		session->children->prev_sib = holder;
+	}
+	session->children = holder;
+
+	/* reparent entry if necssary */
+	if (task->next_sib)
+		task->next_sib->prev_sib = task->prev_sib;
+	if (task->prev_sib)
+		task->prev_sib->next_sib = task->next_sib;
+	if (task->creator)
+		task->creator->children = task->next_sib;
+
+	task->creator = holder;
+	task->next_sib = NULL;
+	task->prev_sib = NULL;
+
+	return 0;
+}
+
+static int cr_propagate_session(struct cr_ctx *ctx, struct task *task)
+{
+	struct task *session = hash_lookup(ctx, task->sid);
+	struct task *creator;
+	pid_t sid = task->sid;
+
+	do {
+		cr_dbg("pid %d: set session\n", task->pid);
+		task->flags |= TASK_SESSION;
+
+		creator = task->creator;
+		if (creator->pid == 1) {
+			if (cr_placeholder_task(ctx, task) < 0)
+				return -1;
+		}
+
+		cr_dbg("pid %d: moving up to %d\n", task->pid, creator->pid);
+		task = creator;
+
+		if(!task->creator && task != cr_init_task(ctx)) {
+			if (cr_set_creator(ctx, task) < 0)
+				return -1;
+		}
+	} while (task->sid != sid &&
+		 task != cr_init_task(ctx) &&
+		 !(task->flags & TASK_SESSION) &&
+		 task->creator != session);
+
+	return 0;
+}
+
+/*
+ * Algorithm MakeForest
+ * "Transparent Checkpoint/Restart of Multiple Processes on Commodity
+ * Operating Systems" in USENIX 2007
+ * http://www.usenix.org/events/usenix07/tech/full_papers/laadan/laadan_html/paper.html
+ *
+ * The algorithm reconstructs the task hierarchy and relationships.
+ * It works in a recursive manner by following the instructions set
+ * forth by the task forest data structure. It begins with a single
+ * init task, that will fork the tasks that have init set as their
+ * creator. Each task then creates its own children.
+ *
+ * The algorithm loops through the list of children of a task three
+ * times, during which the children are forked or cleaned up.  Each
+ * child that is forked executes the same algorithm recursively until
+ * all tasks have been created.
+ *
+ * In the first pass the current task spawns children that are marked
+ * with TASK_SESSION and thereby need to be forked before the current
+ * session id is changed.  The tasks then changes its session id if
+ * needed. In the second pass the task forks the remainder of the
+ * children. In both passes, a child that is marked TASK_THREAD is
+ * created as a thread and a child that is marked TASK_SIBLING is
+ * created with parent inheritance. In the third pass, terminated
+ * tasks and temporary placeholders are cleaned up. Finally, the task
+ * either terminates if it is marked TASK_DEAD or calls sys_restart()
+ * which does not return.
+ */
+static int cr_make_tree(struct cr_ctx *ctx, struct task *task)
+{
+	struct task *child;
+	struct pid_swap swap;
+	pid_t newpid;
+	int ret;
+
+	cr_dbg("pid %d: pid %d sid %d parent %d\n",
+	       task->pid, getpid(), getsid(0), getppid());
+
+	/* 1st pass: fork children that inherit our old session-id */
+	for (child = task->children; child; child = child->next_sib) {
+		if (child->flags & TASK_SESSION) {
+			cr_dbg("pid %d: fork child %d with session\n",
+			       task->pid, child->pid);
+			newpid = cr_fork_child(ctx, child);
+			if (newpid < 0)
+				return -1;
+			child->rpid = newpid;
+		}
+	}
+
+	/* change session id, if necessary */
+	if (task->pid == task->sid) {
+		ret = setsid();
+		if (ret < 0 && task != cr_init_task(ctx)) {
+			perror("setsid");
+			return -1;
+		}
+	}
+
+	/* 2st pass: fork children that inherit our new session-id */
+	for (child = task->children; child; child = child->next_sib) {
+		if (!(child->flags & TASK_SESSION)) {
+			cr_dbg("pid %d: fork child %d without session\n",
+			       task->pid, child->pid);
+			newpid = cr_fork_child(ctx, child);
+			if (newpid < 0)
+				return -1;
+			child->rpid = newpid;
+		}
+	}
+	
+	/* 3rd pass: bring out your deads ... */
+	for (child = task->children; child; child = child->next_sib) {
+		if (child->flags & TASK_DEAD) {
+			ret = waitpid(child->rpid, NULL, 0);
+			if (ret < 0) {
+				perror("waitpid");
+				return -1;
+			}
+		}
+	}
+
+	/* are we supposed to exit now ? */
+	if (task->flags & TASK_DEAD) {
+		cr_dbg("pid %d: task dead ... exiting\n", task->pid);
+		exit(0);
+	}
+
+	/* in 'no-pids' mode we need to report old/new pids via pipe */
 	if (!ctx->args->pids) {
 		/* communicate via pipe that all is well */
-		swap.old = pid;
+		swap.old = task->pid;
 		swap.new = getpid();
 		ret = write(ctx->pipe_out, &swap, sizeof(swap));
 		if (ret != sizeof(swap)) {
 			perror("write swap");
-			exit(1);
+			return -1;
 		}
 		close(ctx->pipe_out);
 	}
@@ -262,6 +764,48 @@ static int cr_make_tree(struct cr_ctx *ctx, pid_t pid, int pos)
 		perror("restart");
 	return ret;
 }
+
+int cr_fork_stub(void *data)
+{
+	struct task *task = (struct task *) data;
+	return cr_make_tree(task->ctx, task);
+}
+
+static int cr_fork_child(struct cr_ctx *ctx, struct task *child)
+{
+	void *stack = NULL;
+	unsigned long flags = SIGCHLD;
+	pid_t pid;
+
+	cr_dbg("forking child vpid %d flags %#x\n", child->pid, child->flags);
+
+	stack = malloc(PTHREAD_STACK_MIN);
+	if (!stack) {
+		perror("stack malloc");
+		return -1;
+	}
+	stack += PTHREAD_STACK_MIN;
+
+	/* FIX: in 'pids' we need to call fork_with_pid() */
+
+	if (child->flags & TASK_THREAD) {
+		flags |= CLONE_THREAD | CLONE_SIGHAND | CLONE_VM;
+	} else if (child->flags & TASK_SIBLING) {
+		flags |= CLONE_PARENT;
+	}
+
+	pid = clone(cr_fork_stub, stack, flags, child);
+	if (pid < 0) {
+		perror("clone");
+		free(stack);
+	}
+
+	if (!(child->flags & TASK_THREAD))
+		free(stack - PTHREAD_STACK_MIN);
+
+	return pid;
+}
+
 
 /*
  * cr_fork_feeder: create the feeder process and set a pipe to deliver
@@ -684,4 +1228,82 @@ static int cr_write_tree(struct cr_ctx *ctx)
 		cr_abort(ctx, "write pids");
 
 	return 0;
+}
+
+/*
+ * a simple hash implementation
+ */
+
+#define HASH_BITS	11
+#define HASH_BUCKETS	(2 << (HASH_BITS - 1))
+
+static int hash_init(struct cr_ctx *ctx)
+{
+	struct hashent *hash;
+
+	ctx->hash_arr = malloc(sizeof(*hash) * HASH_BUCKETS);
+	if (!ctx->hash_arr) {
+		perror("malloc hash table");
+		return -1;
+	}
+	return 0;
+}
+
+static void hash_exit(struct cr_ctx *ctx)
+{
+	struct hashent *hash, *next;
+	int i;
+
+	for (i = 0; i < HASH_BUCKETS; i++) {
+		for (hash = ctx->hash_arr[i]; hash; hash = next) {
+			next = hash->next;
+			free(hash);
+		}
+	}
+
+	free(ctx->hash_arr);
+}
+
+/* see linux kernel's include/linux/hash.h */
+
+/* 2^31 + 2^29 - 2^25 + 2^22 - 2^19 - 2^16 + 1 */
+#define GOLDEN_RATIO_PRIME_32 0x9e370001UL
+
+static inline int hash_func(long key)
+{
+	long hash = key * GOLDEN_RATIO_PRIME_32;
+	return (hash >> (32 - HASH_BITS));
+}
+
+static int hash_insert(struct cr_ctx *ctx, long key, void *data)
+{
+	struct hashent *hash;
+	int bucket;
+
+	hash = malloc(sizeof(*hash));
+	if (!hash) {
+		perror("malloc hash");
+		return -1;
+	}
+	hash->key = key;
+	hash->data = data;
+
+	bucket = hash_func(key);
+	hash->next = ctx->hash_arr[bucket];
+	ctx->hash_arr[bucket] = hash;
+
+	return 0;
+}
+
+static void *hash_lookup(struct cr_ctx *ctx, long key)
+{
+	struct hashent *hash;
+	int bucket;
+
+	bucket = hash_func(key);
+	for (hash = ctx->hash_arr[bucket]; hash; hash = hash->next) {
+		if (hash->key == key)
+			return hash->data;
+	}
+	return NULL;
 }
