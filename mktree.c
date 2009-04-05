@@ -20,6 +20,8 @@
 #include <sched.h>
 #include <pthread.h>
 #include <signal.h>
+#include <time.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <asm/unistd.h>
@@ -56,8 +58,15 @@ static char usage_str[] =
  */
 
 #ifdef CHECKPOINT_DEBUG
-#define cr_dbg(format, args...)  \
-	fprintf(stderr, "<%d>" format, getpid(), ##args)
+#define cr_dbg(_format, _args...)  \
+	fprintf(stderr, "<%d>" _format, gettid(), ##_args)
+#define cr_dbg_cont(_format, _args...)  \
+	fprintf(stderr, _format, ##_args)
+#else
+#define cr_dbg(_format, _args...)  \
+	do { } while (0)
+#define cr_dbg_cont(_format, _args...)  \
+	do { } while (0)
 #endif
 
 #define cr_err(...)  \
@@ -161,6 +170,11 @@ static void hash_exit(struct cr_ctx *ctx);
 static int hash_insert(struct cr_ctx *ctx, long key, void *data);
 static void *hash_lookup(struct cr_ctx *ctx, long key);
 
+static inline pid_t gettid(void)
+{
+	return syscall(__NR_gettid);
+}
+
 struct pid_swap {
 	pid_t old;
 	pid_t new;
@@ -184,7 +198,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "pids",	no_argument,		NULL, 'p' },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hpPv";
+	static char optc[] = "hpP";
 
 	/* defaults */
 	args->pids = 0;
@@ -214,6 +228,7 @@ int main(int argc, char *argv[])
 {
 	struct cr_ctx ctx;
 	struct args args;
+	struct timeval tv;
 	int ret;
 
 	memset(&ctx, 0, sizeof(ctx));
@@ -228,6 +243,9 @@ int main(int argc, char *argv[])
 		printf("mktree does not yet support '--pids' option");
 		exit(0);
 	}
+
+	gettimeofday(&tv, NULL);
+	cr_dbg("start time %lu [s]\n", tv.tv_sec);
 
 	ctx.init_pid = getpid();
 	ctx.args = &args;
@@ -307,6 +325,8 @@ static int cr_build_tree(struct cr_ctx *ctx)
 	/* assign a creator to each task */
 	for (i = 0; i < ctx->tasks_nr; i++) {
 		task = &ctx->tasks_arr[i];
+		if (task == cr_init_task(ctx))
+			continue;
 		if (task->creator)
 			continue;
 		if (cr_set_creator(ctx, task) < 0) {
@@ -323,19 +343,17 @@ static int cr_build_tree(struct cr_ctx *ctx)
 		       task->pid, task->ppid, task->sid,
 		       task->creator ? task->creator->pid : 0);
 		if (task->next_sib)
-			cr_dbg(" next %d", task->next_sib->pid);
+			cr_dbg_cont(" next %d", task->next_sib->pid);
 		if (task->prev_sib)
-			cr_dbg(" prev %d", task->prev_sib->pid);
+			cr_dbg_cont(" prev %d", task->prev_sib->pid);
 		if (task->phantom)
-			cr_dbg(" placeholder %d", task->phantom->pid);
-		if (task->flags & TASK_DEAD)
-			cr_dbg(" D");
-		cr_dbg(" %c%c%c%c",
+			cr_dbg_cont(" placeholder %d", task->phantom->pid);
+		cr_dbg_cont(" %c%c%c%c",
 		       (task->flags & TASK_THREAD) ? 'T' : ' ',
 		       (task->flags & TASK_SIBLING) ? 'P' : ' ',
 		       (task->flags & TASK_SESSION) ? 'S' : ' ',
 		       (task->flags & TASK_DEAD) ? 'D' : ' ');
-		cr_dbg("\n");
+		cr_dbg_cont("\n");
 	}
 #endif
 
@@ -379,7 +397,24 @@ static int cr_setup_task(struct cr_ctx *ctx, pid_t pid)
 static int cr_init_tree(struct cr_ctx *ctx)
 {
 	struct task *task;
+	pid_t init_sid;
+	pid_t init_pid;
+	pid_t init_pgid;
 	int i;
+
+	init_pid = ctx->pids_arr[0].vpid;
+	init_sid = ctx->pids_arr[0].vsid;
+	init_pgid = ctx->pids_arr[0].vpgid;
+
+	/* XXX for out-of-container subtrees */
+	for (i = 0; i < ctx->pids_nr; i++) {
+		if (ctx->pids_arr[i].vsid == init_sid)
+			ctx->pids_arr[i].vsid = init_pid;
+		if (ctx->pids_arr[i].vpgid == init_sid)
+			ctx->pids_arr[i].vpgid = init_pid;
+		if (ctx->pids_arr[i].vpgid == init_pgid)
+			ctx->pids_arr[i].vpgid = init_pid;
+	}
 
 	/* populate with known tasks */
 	for (i = 0; i < ctx->pids_nr; i++) {
@@ -408,7 +443,6 @@ static int cr_init_tree(struct cr_ctx *ctx)
 
 	/* add pids unaccounted for (no tasks) */
 	for (i = 0; i < ctx->pids_nr; i++) {
-		task = &ctx->tasks_arr[i];
 		if (cr_setup_task(ctx, ctx->pids_arr[i].vsid) < 0)
 			return -1;
 		if (cr_setup_task(ctx, ctx->pids_arr[i].vpgid) < 0)
@@ -692,7 +726,7 @@ static int cr_make_tree(struct cr_ctx *ctx, struct task *task)
 	int ret;
 
 	cr_dbg("pid %d: pid %d sid %d parent %d\n",
-	       task->pid, getpid(), getsid(0), getppid());
+	       task->pid, gettid(), getsid(0), getppid());
 
 	/* 1st pass: fork children that inherit our old session-id */
 	for (child = task->children; child; child = child->next_sib) {
@@ -748,7 +782,7 @@ static int cr_make_tree(struct cr_ctx *ctx, struct task *task)
 	if (!ctx->args->pids) {
 		/* communicate via pipe that all is well */
 		swap.old = task->pid;
-		swap.new = getpid();
+		swap.new = gettid();
 		ret = write(ctx->pipe_out, &swap, sizeof(swap));
 		if (ret != sizeof(swap)) {
 			perror("write swap");
@@ -1239,13 +1273,14 @@ static int cr_write_tree(struct cr_ctx *ctx)
 
 static int hash_init(struct cr_ctx *ctx)
 {
-	struct hashent *hash;
+	struct hashent **hash;
 
 	ctx->hash_arr = malloc(sizeof(*hash) * HASH_BUCKETS);
 	if (!ctx->hash_arr) {
 		perror("malloc hash table");
 		return -1;
 	}
+	memset(ctx->hash_arr, 0, sizeof(*hash) * HASH_BUCKETS);
 	return 0;
 }
 
@@ -1271,7 +1306,7 @@ static void hash_exit(struct cr_ctx *ctx)
 
 static inline int hash_func(long key)
 {
-	long hash = key * GOLDEN_RATIO_PRIME_32;
+	unsigned long hash = key * GOLDEN_RATIO_PRIME_32;
 	return (hash >> (32 - HASH_BITS));
 }
 
