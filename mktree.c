@@ -1188,17 +1188,17 @@ static int cr_read_tree(struct cr_ctx *ctx)
 	if (ret < 0)
 		return ret;
 
-	cr_dbg("number of tasks: %d\n", hh->tasks_nr);
+	cr_dbg("number of tasks: %d\n", hh->nr_tasks);
 
-	if (hh->tasks_nr <= 0) {
-		cr_err("invalid number of tasks %d", hh->tasks_nr);
+	if (hh->nr_tasks <= 0) {
+		cr_err("invalid number of tasks %d", hh->nr_tasks);
 		return -1;
 	}
 
 	/* get a working a copy of header */
 	memcpy(ctx->buf, ctx->tree, BUFSIZE);
 
-	ctx->pids_nr = hh->tasks_nr;
+	ctx->pids_nr = hh->nr_tasks;
 	ctx->pids_arr = malloc(sizeof(*ctx->pids_arr) * (ctx->pids_nr));
 	if (!ctx->pids_arr)
 		return -1;
