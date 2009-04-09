@@ -19,7 +19,7 @@ CFLAGS += -g $(WARNS) $(PATHS) $(DEBUG)
 
 PROGS =	self ckpt rstr mktree
 TESTS=	tst_onetask tst_multitask tst_bigmem tst_pipes tst_pipes2 tst_shmem \
-	tst_ipcshm tst_ipcmsq
+	tst_ipcshm tst_ipcmsq tst_ipcshm_multi
 
 LDLIBS = -lm
 
