@@ -540,6 +540,10 @@ static int cr_set_creator(struct cr_ctx *ctx, struct task *task)
 		/* dead: creator is session leader */
 		cr_dbg("pid %d: task is dead\n", task->pid);
 		creator = session;
+	} else if (task->sid == parent->sid) {
+		/* (non-session-leader) inherit: creator is parent */
+		cr_dbg("pid %d: inherit sid %d\n", task->pid, task->sid);
+		creator = parent;
 	} else if (task->ppid == 1) {
 		/* (non-session-leader) orphan: creator is dummy */
 		cr_dbg("pid %d: orphan session %d\n", task->pid, task->sid);
@@ -547,10 +551,6 @@ static int cr_set_creator(struct cr_ctx *ctx, struct task *task)
 			if (cr_placeholder_task(ctx, task) < 0)
 				return -1;
 		creator = session->phantom;
-	} else if (task->sid == parent->sid) {
-		/* (non-session-leader) inherit: creator is parent */
-		cr_dbg("pid %d: inherit sid %d\n", task->pid, task->sid);
-		creator = parent;
 	} else {
 		/* first make sure we know the session's creator */
 		if (!session->creator && session != cr_init_task(ctx)) {
@@ -643,6 +643,7 @@ static int cr_placeholder_task(struct cr_ctx *ctx, struct task *task)
 		session->children->prev_sib = holder;
 	}
 	session->children = holder;
+	session->phantom = holder;
 
 	/* reparent entry if necssary */
 	if (task->next_sib)
