@@ -28,6 +28,7 @@
 #include <sys/syscall.h>
 
 #include <linux/checkpoint_hdr.h>
+#include <asm/checkpoint_hdr.h>
 
 static char usage_str[] =
 "usage: mktree [opts]\n"
@@ -48,7 +49,7 @@ static char usage_str[] =
  *
  * (2) no-pids: creates an equivalent tree without restoring the original
  *   pids, assuming that the application can tolerate this. For this, the
- *   'cr_hdr_pids' array is transformed on-the-fly before it is handed to
+ *   'ckpt_hdr_pids' array is transformed on-the-fly before it is handed to
  *   the restart syscall.
  *
  * To re-create the tasks tree in user space, 'mktree' reads the header and
@@ -58,18 +59,18 @@ static char usage_str[] =
  */
 
 #ifdef CHECKPOINT_DEBUG
-#define cr_dbg(_format, _args...)  \
+#define ckpt_dbg(_format, _args...)  \
 	fprintf(stderr, "<%d>" _format, gettid(), ##_args)
-#define cr_dbg_cont(_format, _args...)  \
+#define ckpt_dbg_cont(_format, _args...)  \
 	fprintf(stderr, _format, ##_args)
 #else
-#define cr_dbg(_format, _args...)  \
+#define ckpt_dbg(_format, _args...)  \
 	do { } while (0)
-#define cr_dbg_cont(_format, _args...)  \
+#define ckpt_dbg_cont(_format, _args...)  \
 	do { } while (0)
 #endif
 
-#define cr_err(...)  \
+#define ckpt_err(...)  \
 	fprintf(stderr, __VA_ARGS__)
 
 inline static int restart(int crid, int fd, unsigned long flags)
@@ -86,7 +87,7 @@ struct hashent {
 };
 
 struct task;
-struct cr_ctx;
+struct ckpt_ctx;
 
 struct task {
 	int flags;		/* state and (later) actions */
@@ -105,7 +106,7 @@ struct task {
 	
 	pid_t rpid;		/* [restart without vpids] actual (real) pid */
 
-	struct cr_ctx *ctx;	/* points back to the c/r context */
+	struct ckpt_ctx *ctx;	/* points back to the c/r context */
 };
 
 #define TASK_DEAD	0x1	/* */
@@ -113,13 +114,13 @@ struct task {
 #define TASK_SIBLING	0x4	/* */
 #define TASK_SESSION	0x8	/* */
 
-struct cr_ctx {
+struct ckpt_ctx {
 	pid_t init_pid;
 	int pipe_in;
 	int pipe_out;
 	int pids_nr;
 
-	struct cr_hdr_pids *pids_arr;
+	struct ckpt_hdr_pids *pids_arr;
 
 	struct task *tasks_arr;
 	int tasks_nr;
@@ -128,47 +129,46 @@ struct cr_ctx {
 
 	struct hashent **hash_arr;
 	
-	char head[BUFSIZE];
-	char head_arch[BUFSIZE];
+	char header[BUFSIZE];
+	char header_arch[BUFSIZE];
 	char tree[BUFSIZE];
 	char buf[BUFSIZE];
 	struct args *args;
 };
 
-static int cr_build_tree(struct cr_ctx *ctx);
-static int cr_init_tree(struct cr_ctx *ctx);
-static int cr_set_creator(struct cr_ctx *ctx, struct task *task);
-static int cr_placeholder_task(struct cr_ctx *ctx, struct task *task);
-static int cr_propagate_session(struct cr_ctx *ctx, struct task *session);
+static int ckpt_build_tree(struct ckpt_ctx *ctx);
+static int ckpt_init_tree(struct ckpt_ctx *ctx);
+static int ckpt_set_creator(struct ckpt_ctx *ctx, struct task *task);
+static int ckpt_placeholder_task(struct ckpt_ctx *ctx, struct task *task);
+static int ckpt_propagate_session(struct ckpt_ctx *ctx, struct task *session);
 
-static int cr_make_tree(struct cr_ctx *ctx, struct task *task);
-static int cr_fork_child(struct cr_ctx *ctx, struct task *child);
-static int cr_adjust_pids(struct cr_ctx *ctx);
+static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task);
+static int ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child);
+static int ckpt_adjust_pids(struct ckpt_ctx *ctx);
 
-static void cr_abort(struct cr_ctx *ctx, char *str);
-static int cr_do_feeder(struct cr_ctx *ctx);
-static int cr_fork_feeder(struct cr_ctx *ctx);
+static void ckpt_abort(struct ckpt_ctx *ctx, char *str);
+static int ckpt_do_feeder(struct ckpt_ctx *ctx);
+static int ckpt_fork_feeder(struct ckpt_ctx *ctx);
 
-static int cr_write(int fd, void *buf, int count);
-static int cr_write_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf);
-static int cr_write_obj_buffer(struct cr_ctx *ctx, void *buf, int n);
+static int ckpt_write(int fd, void *buf, int count);
+static int ckpt_write_obj(struct ckpt_ctx *ctx, struct ckpt_hdr *h);
 
-static int cr_write_head(struct cr_ctx *ctx);
-static int cr_write_head_arch(struct cr_ctx *ctx);
-static int cr_write_tree(struct cr_ctx *ctx);
+static int ckpt_write_header(struct ckpt_ctx *ctx);
+static int ckpt_write_header_arch(struct ckpt_ctx *ctx);
+static int ckpt_write_tree(struct ckpt_ctx *ctx);
 
-static int cr_read(int fd, void *buf, int count);
-static int cr_read_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf, int n);
-static int cr_read_obj_type(struct cr_ctx *ctx, void *buf, int n, int type);
+static int ckpt_read(int fd, void *buf, int count);
+static int ckpt_read_obj(struct ckpt_ctx *ctx, void *buf, int n);
+static int ckpt_read_obj_type(struct ckpt_ctx *ctx, void *b, int n, int type);
 
-static int cr_read_head(struct cr_ctx *ctx);
-static int cr_read_head_arch(struct cr_ctx *ctx);
-static int cr_read_tree(struct cr_ctx *ctx);
+static int ckpt_read_header(struct ckpt_ctx *ctx);
+static int ckpt_read_header_arch(struct ckpt_ctx *ctx);
+static int ckpt_read_tree(struct ckpt_ctx *ctx);
 
-static int hash_init(struct cr_ctx *ctx);
-static void hash_exit(struct cr_ctx *ctx);
-static int hash_insert(struct cr_ctx *ctx, long key, void *data);
-static void *hash_lookup(struct cr_ctx *ctx, long key);
+static int hash_init(struct ckpt_ctx *ctx);
+static void hash_exit(struct ckpt_ctx *ctx);
+static int hash_insert(struct ckpt_ctx *ctx, long key, void *data);
+static void *hash_lookup(struct ckpt_ctx *ctx, long key);
 
 static inline pid_t gettid(void)
 {
@@ -226,7 +226,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
-	struct cr_ctx ctx;
+	struct ckpt_ctx ctx;
 	struct args args;
 	struct timeval tv;
 	int ret;
@@ -245,59 +245,59 @@ int main(int argc, char *argv[])
 	}
 
 	gettimeofday(&tv, NULL);
-	cr_dbg("start time %lu [s]\n", tv.tv_sec);
+	ckpt_dbg("start time %lu [s]\n", tv.tv_sec);
 
 	ctx.init_pid = getpid();
 	ctx.args = &args;
 
 	setpgrp();
 
-	ret = cr_read_head(&ctx);
+	ret = ckpt_read_header(&ctx);
 	if (ret < 0) {
-		perror("read c/r head");
+		perror("read c/r header");
 		exit(1);
 	}
 		
-	ret = cr_read_head_arch(&ctx);
+	ret = ckpt_read_header_arch(&ctx);
 	if (ret < 0) {
-		perror("read c/r head");
+		perror("read c/r header arch");
 		exit(1);
 	}
 
-	ret = cr_read_tree(&ctx);
+	ret = ckpt_read_tree(&ctx);
 	if (ret < 0) {
 		perror("read c/r tree");
 		exit(1);
 	}
 
-	ret = cr_fork_feeder(&ctx);
+	ret = ckpt_fork_feeder(&ctx);
 	if (ret < 0)
 		exit(1);
 
 	/* build creator-child-relationship tree */
-	ret = cr_build_tree(&ctx);
+	ret = ckpt_build_tree(&ctx);
 	if (ret < 0)
 		exit(1);
 
 	hash_exit(&ctx);
 
-	ret = cr_make_tree(&ctx, &ctx.tasks_arr[0]);
+	ret = ckpt_make_tree(&ctx, &ctx.tasks_arr[0]);
 
 	/* if all is well, won't reach here */
-	cr_dbg("c/r make tree failed ?\n");
+	ckpt_dbg("c/r make tree failed ?\n");
 	return 1;
 }
 
-static inline struct task *cr_init_task(struct cr_ctx *ctx)
+static inline struct task *ckpt_init_task(struct ckpt_ctx *ctx)
 {
 	return (&ctx->tasks_arr[0]);
 }
 
 /*
- * cr_build_tree - build the task tree data structure which provides
+ * ckpt_build_tree - build the task tree data structure which provides
  * the "instructions" to re-create the task tree
  */
-static int cr_build_tree(struct cr_ctx *ctx)
+static int ckpt_build_tree(struct ckpt_ctx *ctx)
 {
 	struct task *task;
 	int i;
@@ -316,7 +316,7 @@ static int cr_build_tree(struct cr_ctx *ctx)
 	}
 
 	/* initialize tree */
-	if (cr_init_tree(ctx) < 0) {
+	if (ckpt_init_tree(ctx) < 0) {
 		free(ctx->tasks_arr);
 		ctx->tasks_arr = NULL;
 		return -1;
@@ -325,11 +325,11 @@ static int cr_build_tree(struct cr_ctx *ctx)
 	/* assign a creator to each task */
 	for (i = 0; i < ctx->tasks_nr; i++) {
 		task = &ctx->tasks_arr[i];
-		if (task == cr_init_task(ctx))
+		if (task == ckpt_init_task(ctx))
 			continue;
 		if (task->creator)
 			continue;
-		if (cr_set_creator(ctx, task) < 0) {
+		if (ckpt_set_creator(ctx, task) < 0) {
 			free(ctx->tasks_arr);
 			ctx->tasks_arr = NULL;
 			return -1;
@@ -339,28 +339,28 @@ static int cr_build_tree(struct cr_ctx *ctx)
 #ifdef CHECKPOINT_DEBUG
 	for (i = 0; i < ctx->tasks_nr; i++) {
 		task = &ctx->tasks_arr[i];
-		cr_dbg("pid %d ppid %d sid %d creator %d",
+		ckpt_dbg("pid %d ppid %d sid %d creator %d",
 		       task->pid, task->ppid, task->sid,
 		       task->creator ? task->creator->pid : 0);
 		if (task->next_sib)
-			cr_dbg_cont(" next %d", task->next_sib->pid);
+			ckpt_dbg_cont(" next %d", task->next_sib->pid);
 		if (task->prev_sib)
-			cr_dbg_cont(" prev %d", task->prev_sib->pid);
+			ckpt_dbg_cont(" prev %d", task->prev_sib->pid);
 		if (task->phantom)
-			cr_dbg_cont(" placeholder %d", task->phantom->pid);
-		cr_dbg_cont(" %c%c%c%c",
+			ckpt_dbg_cont(" placeholder %d", task->phantom->pid);
+		ckpt_dbg_cont(" %c%c%c%c",
 		       (task->flags & TASK_THREAD) ? 'T' : ' ',
 		       (task->flags & TASK_SIBLING) ? 'P' : ' ',
 		       (task->flags & TASK_SESSION) ? 'S' : ' ',
 		       (task->flags & TASK_DEAD) ? 'D' : ' ');
-		cr_dbg_cont("\n");
+		ckpt_dbg_cont("\n");
 	}
 #endif
 
 	return 0;
 }		
 
-static int cr_setup_task(struct cr_ctx *ctx, pid_t pid)
+static int ckpt_setup_task(struct ckpt_ctx *ctx, pid_t pid)
 {
 	struct task *task;
 
@@ -372,7 +372,7 @@ static int cr_setup_task(struct cr_ctx *ctx, pid_t pid)
 	task->flags = TASK_DEAD;
 
 	task->pid = pid;
-	task->ppid = cr_init_task(ctx)->pid;
+	task->ppid = ckpt_init_task(ctx)->pid;
 	task->tgid = pid;
 	task->sid = pid;
 
@@ -394,7 +394,7 @@ static int cr_setup_task(struct cr_ctx *ctx, pid_t pid)
 	return 0;
 }
 
-static int cr_init_tree(struct cr_ctx *ctx)
+static int ckpt_init_tree(struct ckpt_ctx *ctx)
 {
 	struct task *task;
 	pid_t init_sid;
@@ -443,9 +443,9 @@ static int cr_init_tree(struct cr_ctx *ctx)
 
 	/* add pids unaccounted for (no tasks) */
 	for (i = 0; i < ctx->pids_nr; i++) {
-		if (cr_setup_task(ctx, ctx->pids_arr[i].vsid) < 0)
+		if (ckpt_setup_task(ctx, ctx->pids_arr[i].vsid) < 0)
 			return -1;
-		if (cr_setup_task(ctx, ctx->pids_arr[i].vpgid) < 0)
+		if (ckpt_setup_task(ctx, ctx->pids_arr[i].vpgid) < 0)
 			return -1;
 	}
 
@@ -516,66 +516,66 @@ static int cr_init_tree(struct cr_ctx *ctx)
  * leader.  This is done using a placeholder in a manner similar to
  * how we handle orphans that are not session leaders.
  */
-static int cr_set_creator(struct cr_ctx *ctx, struct task *task)
+static int ckpt_set_creator(struct ckpt_ctx *ctx, struct task *task)
 {
 	struct task *session = hash_lookup(ctx, task->sid);
 	struct task *parent = hash_lookup(ctx, task->ppid);
 	struct task *creator;
 
-	if (task == cr_init_task(ctx)) {
-		cr_err("pid %d: init - no creator\n", cr_init_task(ctx)->pid);
+	if (task == ckpt_init_task(ctx)) {
+		ckpt_err("pid %d: init - no creator\n", ckpt_init_task(ctx)->pid);
 		return -1;
 	}
 
 	if (task->tgid != task->pid) {
 		/* thread: creator is thread-group-leader */
-		cr_dbg("pid %d: thread tgid %d\n", task->pid, task->tgid);
+		ckpt_dbg("pid %d: thread tgid %d\n", task->pid, task->tgid);
 		creator = hash_lookup(ctx, task->tgid);
 		task->flags |= TASK_THREAD;
 	} else if (task->pid == task->sid) {
 		/* session leader: creator is parent */
-		cr_dbg("pid %d: session leader\n", task->pid);
+		ckpt_dbg("pid %d: session leader\n", task->pid);
 		creator = parent;
 	} else if (task->flags & TASK_DEAD) {
 		/* dead: creator is session leader */
-		cr_dbg("pid %d: task is dead\n", task->pid);
+		ckpt_dbg("pid %d: task is dead\n", task->pid);
 		creator = session;
 	} else if (task->sid == parent->sid) {
 		/* (non-session-leader) inherit: creator is parent */
-		cr_dbg("pid %d: inherit sid %d\n", task->pid, task->sid);
+		ckpt_dbg("pid %d: inherit sid %d\n", task->pid, task->sid);
 		creator = parent;
 	} else if (task->ppid == 1) {
 		/* (non-session-leader) orphan: creator is dummy */
-		cr_dbg("pid %d: orphan session %d\n", task->pid, task->sid);
+		ckpt_dbg("pid %d: orphan session %d\n", task->pid, task->sid);
 		if (!session->phantom)
-			if (cr_placeholder_task(ctx, task) < 0)
+			if (ckpt_placeholder_task(ctx, task) < 0)
 				return -1;
 		creator = session->phantom;
 	} else {
 		/* first make sure we know the session's creator */
-		if (!session->creator && session != cr_init_task(ctx)) {
+		if (!session->creator && session != ckpt_init_task(ctx)) {
 			/* (non-session-leader) recursive: session's creator */
-			cr_dbg("pid %d: recursive session creator %d\n",
+			ckpt_dbg("pid %d: recursive session creator %d\n",
 			       task->pid, task->sid);
-			if (cr_set_creator(ctx, session) < 0)
+			if (ckpt_set_creator(ctx, session) < 0)
 				return -1;
 		}
 		/* then use it to decide what to do */
 		if (session->creator->pid == task->ppid) {
 			/* init must not be sibling creator (CLONE_PARENT) */
-			if (session == cr_init_task(ctx)) {
-				cr_err("pid %d: sibling session prohibited"
+			if (session == ckpt_init_task(ctx)) {
+				ckpt_err("pid %d: sibling session prohibited"
 				       " with init as creator\n", task->pid);
 				return -1;
 			}
 			/* (non-session-leader) sibling: creator is sibling */
-			cr_dbg("pid %d: sibling session %d\n",
+			ckpt_dbg("pid %d: sibling session %d\n",
 			       task->pid, task->sid);
 			creator = session;
 			task->flags |= TASK_SIBLING;
 		} else {
 			/* (non-session-leader) session: fork before setsid */
-			cr_dbg("pid %d: propagate session %d\n",
+			ckpt_dbg("pid %d: propagate session %d\n",
 			       task->pid, task->sid);
 			creator = parent;
 			task->flags |= TASK_SESSION;
@@ -589,25 +589,25 @@ static int cr_set_creator(struct cr_ctx *ctx, struct task *task)
 		next->prev_sib = task;
 	}
 
-	cr_dbg("pid %d: creator set to %d\n", task->pid, creator->pid);
+	ckpt_dbg("pid %d: creator set to %d\n", task->pid, creator->pid);
 	task->creator = creator;
 	creator->children = task;
 
 	if (task->flags & TASK_SESSION)
-		if (cr_propagate_session(ctx, task) < 0)
+		if (ckpt_propagate_session(ctx, task) < 0)
 			return -1;
 
 	return 0;
 }
 
-static int cr_placeholder_task(struct cr_ctx *ctx, struct task *task)
+static int ckpt_placeholder_task(struct ckpt_ctx *ctx, struct task *task)
 {
 	struct task *session = hash_lookup(ctx, task->sid);
 	struct task *holder = &ctx->tasks_arr[ctx->tasks_nr++];
 
 	if (ctx->tasks_nr > ctx->tasks_max) {
 		/* shouldn't happen, beacuse we prepared enough */
-		cr_err("out of space in task table !");
+		ckpt_err("out of space in task table !");
 		return -1;
 	}
 
@@ -625,7 +625,7 @@ static int cr_placeholder_task(struct cr_ctx *ctx, struct task *task)
 	holder->flags = TASK_DEAD;
 
 	holder->pid = ctx->tasks_pid;
-	holder->ppid = cr_init_task(ctx)->pid;
+	holder->ppid = ckpt_init_task(ctx)->pid;
 	holder->tgid = holder->pid;
 	holder->sid = task->sid;
 
@@ -660,31 +660,31 @@ static int cr_placeholder_task(struct cr_ctx *ctx, struct task *task)
 	return 0;
 }
 
-static int cr_propagate_session(struct cr_ctx *ctx, struct task *task)
+static int ckpt_propagate_session(struct ckpt_ctx *ctx, struct task *task)
 {
 	struct task *session = hash_lookup(ctx, task->sid);
 	struct task *creator;
 	pid_t sid = task->sid;
 
 	do {
-		cr_dbg("pid %d: set session\n", task->pid);
+		ckpt_dbg("pid %d: set session\n", task->pid);
 		task->flags |= TASK_SESSION;
 
 		creator = task->creator;
 		if (creator->pid == 1) {
-			if (cr_placeholder_task(ctx, task) < 0)
+			if (ckpt_placeholder_task(ctx, task) < 0)
 				return -1;
 		}
 
-		cr_dbg("pid %d: moving up to %d\n", task->pid, creator->pid);
+		ckpt_dbg("pid %d: moving up to %d\n", task->pid, creator->pid);
 		task = creator;
 
-		if(!task->creator && task != cr_init_task(ctx)) {
-			if (cr_set_creator(ctx, task) < 0)
+		if(!task->creator && task != ckpt_init_task(ctx)) {
+			if (ckpt_set_creator(ctx, task) < 0)
 				return -1;
 		}
 	} while (task->sid != sid &&
-		 task != cr_init_task(ctx) &&
+		 task != ckpt_init_task(ctx) &&
 		 !(task->flags & TASK_SESSION) &&
 		 task->creator != session);
 
@@ -719,22 +719,22 @@ static int cr_propagate_session(struct cr_ctx *ctx, struct task *task)
  * either terminates if it is marked TASK_DEAD or calls sys_restart()
  * which does not return.
  */
-static int cr_make_tree(struct cr_ctx *ctx, struct task *task)
+static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 {
 	struct task *child;
 	struct pid_swap swap;
 	pid_t newpid;
 	int ret;
 
-	cr_dbg("pid %d: pid %d sid %d parent %d\n",
+	ckpt_dbg("pid %d: pid %d sid %d parent %d\n",
 	       task->pid, gettid(), getsid(0), getppid());
 
 	/* 1st pass: fork children that inherit our old session-id */
 	for (child = task->children; child; child = child->next_sib) {
 		if (child->flags & TASK_SESSION) {
-			cr_dbg("pid %d: fork child %d with session\n",
+			ckpt_dbg("pid %d: fork child %d with session\n",
 			       task->pid, child->pid);
-			newpid = cr_fork_child(ctx, child);
+			newpid = ckpt_fork_child(ctx, child);
 			if (newpid < 0)
 				return -1;
 			child->rpid = newpid;
@@ -744,7 +744,7 @@ static int cr_make_tree(struct cr_ctx *ctx, struct task *task)
 	/* change session id, if necessary */
 	if (task->pid == task->sid) {
 		ret = setsid();
-		if (ret < 0 && task != cr_init_task(ctx)) {
+		if (ret < 0 && task != ckpt_init_task(ctx)) {
 			perror("setsid");
 			return -1;
 		}
@@ -753,9 +753,9 @@ static int cr_make_tree(struct cr_ctx *ctx, struct task *task)
 	/* 2st pass: fork children that inherit our new session-id */
 	for (child = task->children; child; child = child->next_sib) {
 		if (!(child->flags & TASK_SESSION)) {
-			cr_dbg("pid %d: fork child %d without session\n",
+			ckpt_dbg("pid %d: fork child %d without session\n",
 			       task->pid, child->pid);
-			newpid = cr_fork_child(ctx, child);
+			newpid = ckpt_fork_child(ctx, child);
 			if (newpid < 0)
 				return -1;
 			child->rpid = newpid;
@@ -775,7 +775,7 @@ static int cr_make_tree(struct cr_ctx *ctx, struct task *task)
 
 	/* are we supposed to exit now ? */
 	if (task->flags & TASK_DEAD) {
-		cr_dbg("pid %d: task dead ... exiting\n", task->pid);
+		ckpt_dbg("pid %d: task dead ... exiting\n", task->pid);
 		exit(0);
 	}
 
@@ -793,26 +793,26 @@ static int cr_make_tree(struct cr_ctx *ctx, struct task *task)
 	}
 
 	/* on success this doesn't return */
-	cr_dbg("about to call sys_restart()\n");
+	ckpt_dbg("about to call sys_restart()\n");
 	ret = restart(ctx->init_pid, STDIN_FILENO, 0);
 	if (ret < 0)
 		perror("restart");
 	return ret;
 }
 
-int cr_fork_stub(void *data)
+int ckpt_fork_stub(void *data)
 {
 	struct task *task = (struct task *) data;
-	return cr_make_tree(task->ctx, task);
+	return ckpt_make_tree(task->ctx, task);
 }
 
-static int cr_fork_child(struct cr_ctx *ctx, struct task *child)
+static int ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 {
 	void *stack = NULL;
 	unsigned long flags = SIGCHLD;
 	pid_t pid;
 
-	cr_dbg("forking child vpid %d flags %#x\n", child->pid, child->flags);
+	ckpt_dbg("forking child vpid %d flags %#x\n", child->pid, child->flags);
 
 	stack = malloc(PTHREAD_STACK_MIN);
 	if (!stack) {
@@ -829,7 +829,7 @@ static int cr_fork_child(struct cr_ctx *ctx, struct task *child)
 		flags |= CLONE_PARENT;
 	}
 
-	pid = clone(cr_fork_stub, stack, flags, child);
+	pid = clone(ckpt_fork_stub, stack, flags, child);
 	if (pid < 0) {
 		perror("clone");
 		free(stack);
@@ -843,16 +843,16 @@ static int cr_fork_child(struct cr_ctx *ctx, struct task *child)
 
 
 /*
- * cr_fork_feeder: create the feeder process and set a pipe to deliver
+ * ckpt_fork_feeder: create the feeder process and set a pipe to deliver
  * the feeder's stdout to our stdin.
  *
  * If restart succeeds, we will never collect the feeder. Rather, we
  * create a grandchild instead, to be collected by init(1).
  *
  * In '--no-pids' mode also setup another pipe through which new tasks
- * will report their old- and new-pid (see cr_adjust_pids).
+ * will report their old- and new-pid (see ckpt_adjust_pids).
  */
-static int cr_fork_feeder(struct cr_ctx *ctx)
+static int ckpt_fork_feeder(struct ckpt_ctx *ctx)
 {
 	int pipe_child[2];	/* for children to report status */
 	int pipe_feed[2];	/* for feeder to provide input */
@@ -923,14 +923,14 @@ static int cr_fork_feeder(struct cr_ctx *ctx)
 			close(pipe_feed[1]);
 		}
 		/* won't return if all goes well */
-		ret = cr_do_feeder(ctx);
+		ret = ckpt_do_feeder(ctx);
 		break;
 	}
 
 	return ret;
 }
 
-static void cr_abort(struct cr_ctx *ctx, char *str)
+static void ckpt_abort(struct ckpt_ctx *ctx, char *str)
 {
 	perror(str);
 	kill(-(ctx->init_pid), SIGTERM);
@@ -939,39 +939,39 @@ static void cr_abort(struct cr_ctx *ctx, char *str)
 
 /*
  * feeder process: delegates checkpoint image stream to the kernel.
- * In '--no-pids' mode, transform the pids array (struct cr_hdr_pids)
+ * In '--no-pids' mode, transform the pids array (struct ckpt_hdr_pids)
  * on the fly and feed the result to the "init" task of the restart
  */
-static int cr_do_feeder(struct cr_ctx *ctx)
+static int ckpt_do_feeder(struct ckpt_ctx *ctx)
 {
 	int ret;
 
 	if (!ctx->args->pids) {
-		ret = cr_adjust_pids(ctx);
+		ret = ckpt_adjust_pids(ctx);
 		if (ret < 0)
 			return ret;
 	}
 
-	if (cr_write_head(ctx) < 0)
-		cr_abort(ctx, "write c/r head");
+	if (ckpt_write_header(ctx) < 0)
+		ckpt_abort(ctx, "write c/r header");
 
-	if (cr_write_head_arch(ctx) < 0)
-		cr_abort(ctx, "write c/r head");
+	if (ckpt_write_header_arch(ctx) < 0)
+		ckpt_abort(ctx, "write c/r header arch");
 
-	if (cr_write_tree(ctx) < 0)
-		cr_abort(ctx, "write c/r tree");
+	if (ckpt_write_tree(ctx) < 0)
+		ckpt_abort(ctx, "write c/r tree");
 
 	/* read rest -> write rest */
 	while (1) {
 		ret = read(STDIN_FILENO, ctx->buf, BUFSIZE);
-		cr_dbg("c/r read input %d\n", ret);
+		ckpt_dbg("c/r read input %d\n", ret);
 		if (ret == 0)
 			break;
 		if (ret < 0)
-			cr_abort(ctx, "read input");
-		ret = cr_write(STDOUT_FILENO, ctx->buf, ret);
+			ckpt_abort(ctx, "read input");
+		ret = ckpt_write(STDOUT_FILENO, ctx->buf, ret);
 		if (ret < 0)
-			cr_abort(ctx, "write output");
+			ckpt_abort(ctx, "write output");
 	}
 
 	/* all is well - we are expected to terminate */
@@ -979,16 +979,16 @@ static int cr_do_feeder(struct cr_ctx *ctx)
 }
 
 /*
- * cr_adjust_pids: transform the pids array (struct cr_hdr_pids) by
+ * ckpt_adjust_pids: transform the pids array (struct ckpt_hdr_pids) by
  * substituing actual pid values for original pid values.
  *
  * Collect pids reported by the newly created tasks; each task sends
  * a 'struct pid_swap' indicating old- and new-pid. Then modify the
  * the pids array accordingly.
  */
-static int cr_adjust_pids(struct cr_ctx *ctx)
+static int ckpt_adjust_pids(struct ckpt_ctx *ctx)
 {
-	struct cr_hdr_pids *copy_arr;
+	struct ckpt_hdr_pids *copy_arr;
 	struct pid_swap swap;
 	int n, m, copy_len, ret;
 
@@ -1005,7 +1005,7 @@ static int cr_adjust_pids(struct cr_ctx *ctx)
 	copy_len = sizeof(*copy_arr) * ctx->pids_nr;
 	copy_arr = malloc(copy_len);
 	if (!copy_arr)
-		cr_abort(ctx, "malloc copy pids");
+		ckpt_abort(ctx, "malloc copy pids");
 	memcpy(copy_arr, ctx->pids_arr, copy_len);
 
 	/* read in 'pid_swap' data and adjust ctx->pids_arr */
@@ -1013,9 +1013,9 @@ static int cr_adjust_pids(struct cr_ctx *ctx)
 		ret = read(ctx->pipe_in, &swap, sizeof(swap));
 		if (ret < 0) {
 			free(copy_arr);
-			cr_abort(ctx, "read pipe");
+			ckpt_abort(ctx, "read pipe");
 		}
-		cr_dbg("c/r swap old %d new %d\n", swap.old, swap.new);
+		ckpt_dbg("c/r swap old %d new %d\n", swap.old, swap.new);
 		for (m = 0; m < ctx->pids_nr; m++) {
 			if (ctx->pids_arr[m].vpid == swap.old)
 				copy_arr[m].vpid = swap.new;
@@ -1035,11 +1035,11 @@ static int cr_adjust_pids(struct cr_ctx *ctx)
 
 /*
  * low-level write
- *   cr_write - write 'count' bytes to 'buf'
- *   cr_write_obj - write object
- *   cr_write_obj_buffer - write buffer object
+ *   ckpt_write - write 'count' bytes to 'buf'
+ *   ckpt_write_obj - write object
+ *   ckpt_write_obj_buffer - write buffer object
  */
-static int cr_write(int fd, void *buf, int count)
+static int ckpt_write(int fd, void *buf, int count)
 {
 	ssize_t nwrite;
 	int nleft;
@@ -1055,32 +1055,18 @@ static int cr_write(int fd, void *buf, int count)
 	return 0;
 }
 
-int cr_write_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf)
+int ckpt_write_obj(struct ckpt_ctx *ctx, struct ckpt_hdr *h)
 {
-	int ret;
-
-	ret = cr_write(STDOUT_FILENO, h, sizeof(*h));
-	if (ret < 0)
-		return ret;
-	return cr_write(STDOUT_FILENO, buf, h->len);
-}
-
-int cr_write_obj_buffer(struct cr_ctx *ctx, void *buf, int n)
-{
-	struct cr_hdr h;
-
-	h.type = CR_HDR_BUFFER;
-	h.len = n;
-	return cr_write_obj(ctx, &h, buf);
+	return ckpt_write(STDOUT_FILENO, h, h->len);
 }
 
 /*
  * low-level read
- *   cr_read - read 'count' bytes to 'buf'
- *   cr_read_obj - read up to 'n' bytes of object into 'buf'
- *   cr_read_type - read up to 'n' bytes of object type 'type' into 'buf'
+ *   ckpt_read - read 'count' bytes to 'buf'
+ *   ckpt_read_obj - read up to 'n' bytes of object into 'buf'
+ *   ckpt_read_type - read up to 'n' bytes of object type 'type' into 'buf'
  */
-static int cr_read(int fd, void *buf, int count)
+static int ckpt_read(int fd, void *buf, int count)
 {
 	ssize_t nread;
 	int nleft;
@@ -1096,68 +1082,71 @@ static int cr_read(int fd, void *buf, int count)
 	return 0;
 }
 
-static int cr_read_obj(struct cr_ctx *ctx, struct cr_hdr *h, void *buf, int n)
+static int ckpt_read_obj(struct ckpt_ctx *ctx, void *buf, int n)
 {
+	struct ckpt_hdr *h = (struct ckpt_hdr *) buf;
 	int ret;
 
-	ret = cr_read(STDIN_FILENO, h, sizeof(*h));
+	ret = ckpt_read(STDIN_FILENO, h, sizeof(*h));
 	if (ret < 0)
 		return ret;
 	if (h->len > n) {
 		errno = EINVAL;
 		return -1;
 	}
-	return cr_read(STDIN_FILENO, buf, h->len);
+	return ckpt_read(STDIN_FILENO, (h + 1), h->len - sizeof(*h));
 }
 
-static int cr_read_obj_type(struct cr_ctx *ctx, void *buf, int n, int type)
+static int ckpt_read_obj_type(struct ckpt_ctx *ctx, void *buf, int n, int type)
 {
-	struct cr_hdr h;
+	struct ckpt_hdr *h = (struct ckpt_hdr *) buf;
 	int ret;
 
-	ret = cr_read_obj(ctx, &h, buf, n);
+	ret = ckpt_read_obj(ctx, buf, n);
 	if (ret < 0)
 		return ret;
-	return (h.type == type) ? 0 : -1;
+	return (h->type == type) ? 0 : -1;
 }
 
-static int cr_read_obj_buffer(struct cr_ctx *ctx, void *buf, int n)
+static int ckpt_read_obj_buffer(struct ckpt_ctx *ctx, void *buf, int n)
 {
-	return cr_read_obj_type(ctx, buf, BUFSIZE, CR_HDR_BUFFER);
+	return ckpt_read_obj_type(ctx, buf, BUFSIZE, CKPT_HDR_BUFFER);
 }
 
 /*
  * read/write the checkpoint image: similar to in-kernel code
  */
 
-static int cr_read_head(struct cr_ctx *ctx)
+static int ckpt_read_header(struct ckpt_ctx *ctx)
 {
-	struct cr_hdr_head *hh;
+	struct ckpt_hdr_header *h;
 	char *ptr;
 	int ret;
 
-	hh = (struct cr_hdr_head *) ctx->head;;
-	ret = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_HEAD);
+	h = (struct ckpt_hdr_header *) ctx->header;
+	ret = ckpt_read_obj_type(ctx, h, sizeof(*h), CKPT_HDR_HEADER);
 	if (ret < 0)
 		return ret;
 
-	if (hh->uts_release_len > BUFSIZE / 4 ||
-	    hh->uts_version_len > BUFSIZE / 4 ||
-	    hh->uts_machine_len > BUFSIZE / 4) {
+	if (h->uts_release_len > BUFSIZE / 4 ||
+	    h->uts_version_len > BUFSIZE / 4 ||
+	    h->uts_machine_len > BUFSIZE / 4) {
 		errno = EINVAL;
 		return -1;
 	}
 
-	ptr = (char *) (hh + 1);
-	ret = cr_read_obj_buffer(ctx, ptr, hh->uts_release_len);
+	ptr = (char *) h;
+
+	ptr += ((struct ckpt_hdr *) ptr)->len;
+	ret = ckpt_read_obj_buffer(ctx, ptr, h->uts_release_len);
 	if (ret < 0)
 		return ret;
-	ptr += hh->uts_release_len;
-	ret = cr_read_obj_buffer(ctx, ptr, hh->uts_version_len);
+	ptr += ((struct ckpt_hdr *) ptr)->len;
+	ret = ckpt_read_obj_buffer(ctx, ptr, h->uts_version_len);
 	if (ret < 0)
 		return ret;
-	ptr += hh->uts_version_len;
-	ret = cr_read_obj_buffer(ctx, ptr, hh->uts_machine_len);
+	ptr += ((struct ckpt_hdr *) ptr)->len;
+	ret = ckpt_read_obj_buffer(ctx, ptr, h->uts_machine_len);
 	if (ret < 0)
 		return ret;
 
@@ -1166,101 +1155,91 @@ static int cr_read_head(struct cr_ctx *ctx)
 	return 0;
 }
 
-static int cr_read_head_arch(struct cr_ctx *ctx)
+static int ckpt_read_header_arch(struct ckpt_ctx *ctx)
 {
-	struct cr_hdr_head_arch *hh;
+	struct ckpt_hdr_header_arch *h;
 	int ret;
 
-	hh = (struct cr_hdr_head_arch *) ctx->head_arch;
-	ret = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_HEAD_ARCH);
+	h = (struct ckpt_hdr_header_arch *) ctx->header_arch;
+	ret = ckpt_read_obj_type(ctx, h, sizeof(*h), CKPT_HDR_HEADER_ARCH);
 	if (ret < 0)
 		return ret;
 
 	return 0;
 }
 
-static int cr_read_tree(struct cr_ctx *ctx)
+static int ckpt_read_tree(struct ckpt_ctx *ctx)
 {
-	struct cr_hdr_tree *hh;
+	struct ckpt_hdr_tree *h;
 	int ret;
 
-	hh = (struct cr_hdr_tree *) ctx->tree;
-	ret = cr_read_obj_type(ctx, hh, sizeof(*hh), CR_HDR_TREE);
+	h = (struct ckpt_hdr_tree *) ctx->tree;
+	ret = ckpt_read_obj_type(ctx, h, sizeof(*h), CKPT_HDR_TREE);
 	if (ret < 0)
 		return ret;
 
-	cr_dbg("number of tasks: %d\n", hh->nr_tasks);
+	ckpt_dbg("number of tasks: %d\n", h->nr_tasks);
 
-	if (hh->nr_tasks <= 0) {
-		cr_err("invalid number of tasks %d", hh->nr_tasks);
+	if (h->nr_tasks <= 0) {
+		ckpt_err("invalid number of tasks %d", h->nr_tasks);
 		return -1;
 	}
 
 	/* get a working a copy of header */
 	memcpy(ctx->buf, ctx->tree, BUFSIZE);
 
-	ctx->pids_nr = hh->nr_tasks;
+	ctx->pids_nr = h->nr_tasks;
 	ctx->pids_arr = malloc(sizeof(*ctx->pids_arr) * (ctx->pids_nr));
 	if (!ctx->pids_arr)
 		return -1;
 
-	return cr_read(STDIN_FILENO, ctx->pids_arr,
+	return ckpt_read(STDIN_FILENO, ctx->pids_arr,
 		       sizeof(*ctx->pids_arr) * ctx->pids_nr);
 }
 
-static int cr_write_head(struct cr_ctx *ctx)
+static int ckpt_write_header(struct ckpt_ctx *ctx)
 {
-	struct cr_hdr h;
-	struct cr_hdr_head *hh;
 	char *ptr;
 	int ret;
 
-	h.type = CR_HDR_HEAD;
-	h.len = sizeof(*hh);
-	hh = (struct cr_hdr_head *) ctx->head;;
-	ret = cr_write_obj(ctx, &h, hh);
+	ptr = (char *) ctx->header;
+	ret = ckpt_write_obj(ctx, (struct ckpt_hdr *) ptr);
 	if (ret < 0)
 		return ret;
 
-	ptr = (char *) (hh + 1);
-	ret = cr_write_obj_buffer(ctx, ptr, hh->uts_release_len);
+	ptr += ((struct ckpt_hdr *) ptr)->len;
+	ret = ckpt_write_obj(ctx, (struct ckpt_hdr *) ptr);
 	if (ret < 0)
 		return ret;
-	ptr += hh->uts_release_len;
-	ret = cr_write_obj_buffer(ctx, ptr, hh->uts_version_len);
+	ptr += ((struct ckpt_hdr *) ptr)->len;
+	ret = ckpt_write_obj(ctx, (struct ckpt_hdr *) ptr);
 	if (ret < 0)
 		return ret;
-	ptr += hh->uts_version_len;
-	ret = cr_write_obj_buffer(ctx, ptr, hh->uts_machine_len);
+	ptr += ((struct ckpt_hdr *) ptr)->len;
+	ret = ckpt_write_obj(ctx, (struct ckpt_hdr *) ptr);
 
 	return ret;
 }
 
-static int cr_write_head_arch(struct cr_ctx *ctx)
+static int ckpt_write_header_arch(struct ckpt_ctx *ctx)
 {
-	struct cr_hdr h;
-	struct cr_hdr_head_arch *hh;
+	struct ckpt_hdr_header_arch *h;
 
-	h.type = CR_HDR_HEAD_ARCH;
-	h.len = sizeof(*hh);
-	hh = (struct cr_hdr_head_arch *) ctx->head_arch;
-	return cr_write_obj(ctx, &h, hh);
+	h = (struct ckpt_hdr_header_arch *) ctx->header_arch;
+	return ckpt_write_obj(ctx, (struct ckpt_hdr *) h);
 }
 
-static int cr_write_tree(struct cr_ctx *ctx)
+static int ckpt_write_tree(struct ckpt_ctx *ctx)
 {
-	struct cr_hdr h;
-	struct cr_hdr_tree *hh;
+	struct ckpt_hdr_tree *h;
 
-	h.type = CR_HDR_TREE;
-	h.len = sizeof(*hh);
-	hh = (struct cr_hdr_tree *) ctx->tree;
-	if (cr_write_obj(ctx, &h, hh) < 0)
-		cr_abort(ctx, "write tree");
+	h = (struct ckpt_hdr_tree *) ctx->tree;
+	if (ckpt_write_obj(ctx, (struct ckpt_hdr *) h) < 0)
+		ckpt_abort(ctx, "write tree");
 
-	if (cr_write(STDOUT_FILENO, ctx->pids_arr,
+	if (ckpt_write(STDOUT_FILENO, ctx->pids_arr,
 		     sizeof(*ctx->pids_arr) * ctx->pids_nr) < 0)
-		cr_abort(ctx, "write pids");
+		ckpt_abort(ctx, "write pids");
 
 	return 0;
 }
@@ -1272,7 +1251,7 @@ static int cr_write_tree(struct cr_ctx *ctx)
 #define HASH_BITS	11
 #define HASH_BUCKETS	(2 << (HASH_BITS - 1))
 
-static int hash_init(struct cr_ctx *ctx)
+static int hash_init(struct ckpt_ctx *ctx)
 {
 	struct hashent **hash;
 
@@ -1285,7 +1264,7 @@ static int hash_init(struct cr_ctx *ctx)
 	return 0;
 }
 
-static void hash_exit(struct cr_ctx *ctx)
+static void hash_exit(struct ckpt_ctx *ctx)
 {
 	struct hashent *hash, *next;
 	int i;
@@ -1311,7 +1290,7 @@ static inline int hash_func(long key)
 	return (hash >> (32 - HASH_BITS));
 }
 
-static int hash_insert(struct cr_ctx *ctx, long key, void *data)
+static int hash_insert(struct ckpt_ctx *ctx, long key, void *data)
 {
 	struct hashent *hash;
 	int bucket;
@@ -1331,7 +1310,7 @@ static int hash_insert(struct cr_ctx *ctx, long key, void *data)
 	return 0;
 }
 
-static void *hash_lookup(struct cr_ctx *ctx, long key)
+static void *hash_lookup(struct ckpt_ctx *ctx, long key)
 {
 	struct hashent *hash;
 	int bucket;
