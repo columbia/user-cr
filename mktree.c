@@ -1105,7 +1105,11 @@ static int ckpt_read_obj_type(struct ckpt_ctx *ctx, void *buf, int n, int type)
 	ret = ckpt_read_obj(ctx, buf, n);
 	if (ret < 0)
 		return ret;
-	return (h->type == type) ? 0 : -1;
+	if (h->type != type) {
+		errno = EINVAL;
+		return -1;
+	}
+	return 0;
 }
 
 static int ckpt_read_obj_buffer(struct ckpt_ctx *ctx, void *buf, int n)
