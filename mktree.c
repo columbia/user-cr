@@ -1291,7 +1291,7 @@ static void hash_exit(struct ckpt_ctx *ctx)
 static inline int hash_func(long key)
 {
 	unsigned long hash = key * GOLDEN_RATIO_PRIME_32;
-	return (hash >> (32 - HASH_BITS));
+	return (hash >> (sizeof(key)*8 - HASH_BITS));
 }
 
 static int hash_insert(struct ckpt_ctx *ctx, long key, void *data)
