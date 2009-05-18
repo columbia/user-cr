@@ -11,7 +11,8 @@ int main(int argc, char *argv[])
 	FILE *file;
 	float a;
 	pid_t pid;
-	int pipefd[2];
+	int pipe1[2];
+	int pipe2[2];
 	int i, ret;
 
 	pid = getpid();
@@ -35,7 +36,7 @@ int main(int argc, char *argv[])
 
 	a = sqrt(2.53 * (getpid() / 1.21));
 
-	if (pipe(pipefd) < 0) {
+	if (pipe(pipe1) < 0 || pipe(pipe2)) {
 		perror("pipe");
 		exit(1);
 	}
@@ -49,11 +50,13 @@ int main(int argc, char *argv[])
 	}
 
 	if (pid == getpid()) {
-		close(pipefd[0]);
-		write(pipefd[1], &pid, sizeof(pid));
-		write(pipefd[1], &pid, sizeof(pid));
+		close(pipe1[0]);
+		write(pipe1[1], &pid, sizeof(pid));
+		write(pipe1[1], &pid, sizeof(pid));
+		close(pipe2[0]);
 	} else {
-		close(pipefd[1]);
+		close(pipe1[1]);
+		close(pipe2[1]);
 	}
 
 	for (i = 0; i < 10; i++) {
@@ -65,13 +68,15 @@ int main(int argc, char *argv[])
 	}
 
 	if (pid == getpid()) {
-		close(pipefd[1]);
+		close(pipe1[1]);
+		close(pipe2[1]);
 	} else {
-		ret = read(pipefd[0], &i, sizeof(pid));
+		ret = read(pipe1[0], &i, sizeof(pid));
 		fprintf(file, "[%d] read pid %d (ret %d)\n", pid, i, ret);
-		ret = read(pipefd[0], &i, sizeof(pid));
+		ret = read(pipe1[0], &i, sizeof(pid));
 		fprintf(file, "[%d] read pid %d (ret %d)\n", pid, i, ret);
-		close(pipefd[0]);
+		close(pipe1[0]);
+		close(pipe2[0]);
 	}
 		
 	fprintf(file, "[pid %d] world, hello (%.2f) !\n", getpid(), a);
