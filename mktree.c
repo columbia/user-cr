@@ -158,7 +158,8 @@ static int ckpt_write_header_arch(struct ckpt_ctx *ctx);
 static int ckpt_write_tree(struct ckpt_ctx *ctx);
 
 static int ckpt_read(int fd, void *buf, int count);
-static int ckpt_read_obj(struct ckpt_ctx *ctx, void *buf, int n);
+static int ckpt_read_obj(struct ckpt_ctx *ctx,
+			 struct ckpt_hdr *h, void *buf, int n);
 static int ckpt_read_obj_type(struct ckpt_ctx *ctx, void *b, int n, int type);
 
 static int ckpt_read_header(struct ckpt_ctx *ctx);
@@ -1060,11 +1061,25 @@ int ckpt_write_obj(struct ckpt_ctx *ctx, struct ckpt_hdr *h)
 	return ckpt_write(STDOUT_FILENO, h, h->len);
 }
 
+int ckpt_write_obj_ptr(struct ckpt_ctx *ctx, void *buf, int n, int type)
+{
+	struct ckpt_hdr h;
+	int ret;
+
+	h.type = type;
+	h.len = n + sizeof(h);
+	ret = ckpt_write(STDOUT_FILENO, &h, sizeof(h));
+	if (!ret)
+		ret = ckpt_write(STDOUT_FILENO, buf, n);
+	return ret;
+}
+
 /*
  * low-level read
  *   ckpt_read - read 'count' bytes to 'buf'
  *   ckpt_read_obj - read up to 'n' bytes of object into 'buf'
- *   ckpt_read_type - read up to 'n' bytes of object type 'type' into 'buf'
+ *   ckpt_read_obj_type - read up to 'n' bytes of object type 'type' into 'buf'
+ *   ckpt_read_obj_ptr - like ckpt_read_obj_type, but discards header
  */
 static int ckpt_read(int fd, void *buf, int count)
 {
@@ -1082,9 +1097,9 @@ static int ckpt_read(int fd, void *buf, int count)
 	return 0;
 }
 
-static int ckpt_read_obj(struct ckpt_ctx *ctx, void *buf, int n)
+static int ckpt_read_obj(struct ckpt_ctx *ctx,
+			 struct ckpt_hdr *h, void *buf, int n)
 {
-	struct ckpt_hdr *h = (struct ckpt_hdr *) buf;
 	int ret;
 
 	ret = ckpt_read(STDIN_FILENO, h, sizeof(*h));
@@ -1094,7 +1109,7 @@ static int ckpt_read_obj(struct ckpt_ctx *ctx, void *buf, int n)
 		errno = EINVAL;
 		return -1;
 	}
-	return ckpt_read(STDIN_FILENO, (h + 1), h->len - sizeof(*h));
+	return ckpt_read(STDIN_FILENO, buf, h->len - sizeof(*h));
 }
 
 static int ckpt_read_obj_type(struct ckpt_ctx *ctx, void *buf, int n, int type)
@@ -1102,10 +1117,25 @@ static int ckpt_read_obj_type(struct ckpt_ctx *ctx, void *buf, int n, int type)
 	struct ckpt_hdr *h = (struct ckpt_hdr *) buf;
 	int ret;
 
-	ret = ckpt_read_obj(ctx, buf, n);
+	ret = ckpt_read_obj(ctx, h, (void *) (h + 1), n);
 	if (ret < 0)
 		return ret;
 	if (h->type != type) {
+		errno = EINVAL;
+		return -1;
+	}
+	return 0;
+}
+
+static int ckpt_read_obj_ptr(struct ckpt_ctx *ctx, void *buf, int n, int type)
+{
+	struct ckpt_hdr h;
+	int ret;
+
+	ret = ckpt_read_obj(ctx, &h, buf, n + sizeof(h));
+	if (ret < 0)
+		return ret;
+	if (h.type != type) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -1175,7 +1205,7 @@ static int ckpt_read_header_arch(struct ckpt_ctx *ctx)
 static int ckpt_read_tree(struct ckpt_ctx *ctx)
 {
 	struct ckpt_hdr_tree *h;
-	int ret;
+	int len, ret;
 
 	h = (struct ckpt_hdr_tree *) ctx->tree;
 	ret = ckpt_read_obj_type(ctx, h, sizeof(*h), CKPT_HDR_TREE);
@@ -1186,19 +1216,25 @@ static int ckpt_read_tree(struct ckpt_ctx *ctx)
 
 	if (h->nr_tasks <= 0) {
 		ckpt_err("invalid number of tasks %d", h->nr_tasks);
+		errno = EINVAL;
 		return -1;
 	}
 
 	/* get a working a copy of header */
 	memcpy(ctx->buf, ctx->tree, BUFSIZE);
 
+	len = sizeof(struct ckpt_hdr_pids) * h->nr_tasks;
+
 	ctx->pids_nr = h->nr_tasks;
-	ctx->pids_arr = malloc(sizeof(*ctx->pids_arr) * (ctx->pids_nr));
+	ctx->pids_arr = malloc(len);
 	if (!ctx->pids_arr)
 		return -1;
 
-	return ckpt_read(STDIN_FILENO, ctx->pids_arr,
-		       sizeof(*ctx->pids_arr) * ctx->pids_nr);
+	ret = ckpt_read_obj_ptr(ctx, ctx->pids_arr, len, CKPT_HDR_BUFFER);
+	if (ret < 0)
+		free(ctx->pids_arr);
+
+	return ret;
 }
 
 static int ckpt_write_header(struct ckpt_ctx *ctx)
@@ -1236,13 +1272,14 @@ static int ckpt_write_header_arch(struct ckpt_ctx *ctx)
 static int ckpt_write_tree(struct ckpt_ctx *ctx)
 {
 	struct ckpt_hdr_tree *h;
+	int len;
 
 	h = (struct ckpt_hdr_tree *) ctx->tree;
 	if (ckpt_write_obj(ctx, (struct ckpt_hdr *) h) < 0)
 		ckpt_abort(ctx, "write tree");
 
-	if (ckpt_write(STDOUT_FILENO, ctx->pids_arr,
-		     sizeof(*ctx->pids_arr) * ctx->pids_nr) < 0)
+	len = sizeof(struct ckpt_hdr_pids) * ctx->pids_nr;
+	if (ckpt_write_obj_ptr(ctx, ctx->pids_arr, len, CKPT_HDR_BUFFER) < 0)
 		ckpt_abort(ctx, "write pids");
 
 	return 0;
