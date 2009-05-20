@@ -30,10 +30,12 @@ static char usage_str[] =
 "\tOptions:\n"
 "\t -h,--help             print this help message\n"
 "\t -c,--container        require the PID is a container-init\n"
+"\t -v,--verbose          verbose output\n"
 "";
 
 struct args {
 	int container;
+	int verbose;
 };
 
 static void usage(char *str)
@@ -47,12 +49,10 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	static struct option opts[] = {
 		{ "help",	no_argument,		NULL, 'h' },
 		{ "container",	no_argument,		NULL, 'c' },
+		{ "verbose",	no_argument,		NULL, 'v' },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hc";
-
-	/* defaults */
-	args->container = 0;
+	static char optc[] = "hvc";
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, NULL);
@@ -65,6 +65,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			usage(usage_str);
 		case 'c':
 			args->container = 1;
+			break;
+		case 'v':
+			args->verbose = 1;
 			break;
 		default:
 			usage(usage_str);
@@ -99,8 +102,8 @@ int main(int argc, char *argv[])
 
 	if (ret < 0)
 		perror("checkpoint");
-	else
-		printf("checkpoint id %d\n", ret);
+	else if (args.verbose)
+		fprintf(stderr, "checkpoint id %d\n", ret);
 
 	return (ret > 0 ? 0 : 1);
 }

@@ -17,7 +17,7 @@ WARNS := -Wall -Wstrict-prototypes -Wno-trigraphs
 # compiler flags
 CFLAGS += -g $(WARNS) $(PATHS) $(DEBUG)
 
-PROGS =	self ckpt rstr mktree
+PROGS =	self ckpt rstr mktree ckptinfo
 
 LDLIBS = -lm
 
