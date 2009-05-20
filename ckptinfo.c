@@ -50,6 +50,7 @@ static int image_read_obj(int fd, struct ckpt_hdr **h);
 static int image_parse(int fd, struct args *args);
 static int image_parse_error(struct ckpt_hdr *h, int fd, struct args *args);
 
+static char *hdr_type_to_str(int type);
 
 static void usage(char *str)
 {
@@ -152,7 +153,8 @@ static int image_read_obj(int fd, struct ckpt_hdr **hh)
 	if (ret == 0)
 		return 0;
 
-	VERBOSE("info: object type %d len %d \n", h.type, h.len);
+	VERBOSE("info: object type %s len %d \n",
+		hdr_type_to_str(h.type), h.len);
 
 	p = malloc(h.len);
 	if (!p) {
@@ -229,3 +231,58 @@ static int image_parse_error(struct ckpt_hdr *h, int fd, struct args *args)
 	free(p);
 	return 0;
 }
+
+#define HDR_TO_STR(__type)  \
+	case __type: return #__type;
+
+static char *hdr_type_to_str(int type)
+{
+	switch (type) {
+	HDR_TO_STR(CKPT_HDR_HEADER);
+	HDR_TO_STR(CKPT_HDR_HEADER_ARCH);
+	HDR_TO_STR(CKPT_HDR_BUFFER);
+	HDR_TO_STR(CKPT_HDR_STRING);
+	HDR_TO_STR(CKPT_HDR_FNAME);
+	HDR_TO_STR(CKPT_HDR_OBJREF);
+
+	HDR_TO_STR(CKPT_HDR_TREE);
+	HDR_TO_STR(CKPT_HDR_TASK);
+	HDR_TO_STR(CKPT_HDR_TASK_NS);
+	HDR_TO_STR(CKPT_HDR_TASK_OBJS);
+	HDR_TO_STR(CKPT_HDR_RESTART_BLOCK);
+	HDR_TO_STR(CKPT_HDR_THREAD);
+	HDR_TO_STR(CKPT_HDR_CPU);
+	HDR_TO_STR(CKPT_HDR_NS);
+	HDR_TO_STR(CKPT_HDR_UTS_NS);
+	HDR_TO_STR(CKPT_HDR_IPC_NS);
+
+	HDR_TO_STR(CKPT_HDR_MM);
+	HDR_TO_STR(CKPT_HDR_VMA);
+	HDR_TO_STR(CKPT_HDR_PGARR);
+	HDR_TO_STR(CKPT_HDR_MM_CONTEXT);
+
+	HDR_TO_STR(CKPT_HDR_FD_TABLE);
+	HDR_TO_STR(CKPT_HDR_FD_ENT);
+	HDR_TO_STR(CKPT_HDR_FILE);
+	HDR_TO_STR(CKPT_HDR_FILE_PIPE);
+
+	HDR_TO_STR(CKPT_HDR_IPC);
+	HDR_TO_STR(CKPT_HDR_IPC_SHM);
+	HDR_TO_STR(CKPT_HDR_IPC_MSG);
+	HDR_TO_STR(CKPT_HDR_IPC_MSG_MSG);
+	HDR_TO_STR(CKPT_HDR_IPC_SEM);
+
+#if defined(__i386__) || defined(__x86_64__)
+	HDR_TO_STR(CKPT_HDR_THREAD_TLS);
+	HDR_TO_STR(CKPT_HDR_CPU_FPU);
+	HDR_TO_STR(CKPT_HDR_MM_CONTEXT_LDT);
+#endif
+
+	HDR_TO_STR(CKPT_HDR_TAIL);
+
+	HDR_TO_STR(CKPT_HDR_ERROR);
+	}
+
+	return "UNKNOWN CKPT HDR";
+}
+
