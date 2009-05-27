@@ -30,8 +30,8 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	ptr1 = (unsigned char *) (msg1 + 1);
-	ptr2 = (unsigned char *) (msg2 + 1);
+	ptr1 = (unsigned char *) msg1->mtext;
+	ptr2 = (unsigned char *) msg2->mtext;
 
 	for (i = 0, k = 0; i < 1024; i++, k = (k + 1) % 256) {
 		ptr1[i] = k;
@@ -95,7 +95,7 @@ int main(int argc, char *argv[])
 			exit(1);
 		}
 		for (i = 0, k = 0; i < 1024; i++, k = (k + 1) % 256) {
-			if (ptr1[i] != i || ptr2[i] != 255 - i) {
+			if (ptr1[i] != k || ptr2[i] != 255 - k) {
 				fprintf(file, "mismatch at %d\n", i);
 				fflush(file);
 				break;
