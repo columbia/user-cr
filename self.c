@@ -16,6 +16,8 @@
 #include <math.h>
 #include <sys/syscall.h>
 
+#include <linux/checkpoint_types.h>
+
 #define OUTFILE  "/tmp/cr-self.out"
 
 int main(int argc, char *argv[])
@@ -52,7 +54,8 @@ int main(int argc, char *argv[])
 		fflush(file);
 
 		if (i == 2) {
-			ret = syscall(__NR_checkpoint, pid, STDOUT_FILENO, 0);
+			ret = syscall(__NR_checkpoint,
+				      pid, STDOUT_FILENO, CHECKPOINT_SUBTREE);
 			if (ret < 0) {
 				fprintf(file, "ckpt: %s\n", strerror(errno));
 				exit(2);
