@@ -27,6 +27,7 @@
 #include <asm/unistd.h>
 #include <sys/syscall.h>
 
+#include <linux/checkpoint.h>
 #include <linux/checkpoint_hdr.h>
 #include <asm/checkpoint_hdr.h>
 
@@ -38,6 +39,10 @@ static char usage_str[] =
 "\t -h,--help             print this help message\n"
 "\t -p,--pids             restore original tasks' pids (in container)\n"
 "\t -P,--no-pids          do not restore original tasks' pids (default)\n"
+"\t -w,--wait             wait for (root) task to termiate (default)\n"
+"\t    --show-status      show exit status of (root) task (implies -w)\n"
+"\t    --copy-status      imitate exit status of (root) task (implies -w)\n"
+"\t -W,--no-wait          do not wait for (root) task to terminate\n"
 "";
 
 /*
@@ -115,6 +120,7 @@ struct task {
 #define TASK_SESSION	0x8	/* */
 
 struct ckpt_ctx {
+	pid_t coord_pid;
 	pid_t init_pid;
 	int pipe_in;
 	int pipe_out;
@@ -136,12 +142,18 @@ struct ckpt_ctx {
 	struct args *args;
 };
 
+pid_t global_root_pid;
+int global_sent_sigint;
+sighandler_t global_sigchld_handler;
+sighandler_t global_sigint_handler;
+
 static int ckpt_build_tree(struct ckpt_ctx *ctx);
 static int ckpt_init_tree(struct ckpt_ctx *ctx);
 static int ckpt_set_creator(struct ckpt_ctx *ctx, struct task *task);
 static int ckpt_placeholder_task(struct ckpt_ctx *ctx, struct task *task);
 static int ckpt_propagate_session(struct ckpt_ctx *ctx, struct task *session);
 
+static int ckpt_fork_tree(struct ckpt_ctx *ctx);
 static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task);
 static int ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child);
 static int ckpt_adjust_pids(struct ckpt_ctx *ctx);
@@ -183,6 +195,9 @@ struct pid_swap {
 
 struct args {
 	int pids;
+	int wait;
+	int show_status;
+	int copy_status;
 };
 
 static void usage(char *str)
@@ -197,12 +212,17 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "help",	no_argument,		NULL, 'h' },
 		{ "no-pids",	no_argument,		NULL, 'P' },
 		{ "pids",	no_argument,		NULL, 'p' },
+		{ "wait",	no_argument,		NULL, 'w' },
+		{ "show-status",	no_argument,	NULL, 1 },
+		{ "copy-status",	no_argument,	NULL, 2 },
+		{ "no-wait",	no_argument,		NULL, 'W' },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hpP";
+	static char optc[] = "hpPwW";
 
 	/* defaults */
-	args->pids = 0;
+	memset(args, 0, sizeof(*args));
+	args->wait = 1;
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, NULL);
@@ -219,21 +239,71 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		case 'P':
 			args->pids = 0;
 			break;
+		case 'w':
+			args->wait = 1;
+			break;
+		case 'W':
+			args->wait = 0;
+			break;
+		case 1:
+			args->wait = 1;
+			args->show_status = 1;
+			break;
+		case 2:
+			args->wait = 1;
+			args->copy_status = 1;
+			break;
 		default:
 			usage(usage_str);
 		}
 	}
 }
 
+static void peaceful_handler(int sig)
+{
+	/* see comment below when setting this handler */
+	return; 
+}
+
+static void sigchld_handler(int sig)
+{
+	int status;
+	pid_t pid;
+
+	pid = waitpid(0, &status, WNOHANG);
+	if (pid < 0) {
+		perror("WEIRD !! child collection failed");
+		exit(1);
+	}
+
+	if (WIFEXITED(status))
+		ckpt_err("root task exited status %d", WEXITSTATUS(status));
+	else if (WIFSIGNALED(status))
+		ckpt_err("root task killed signal %d", WTERMSIG(status));
+	else
+		ckpt_err("root task dies somehow ... raw status %d", status);
+
+	exit(1);
+}
+
+static void sigint_handler(int sig)
+{
+	if (global_root_pid) {
+		kill(-global_root_pid, SIGINT);
+		kill(global_root_pid, SIGINT);
+		global_sent_sigint = 1;
+	}
+}
 int main(int argc, char *argv[])
 {
 	struct ckpt_ctx ctx;
 	struct args args;
 	struct timeval tv;
+	int status, sig;
+	pid_t pid;
 	int ret;
 
 	memset(&ctx, 0, sizeof(ctx));
-	memset(&args, 0, sizeof(args));
 
 	if (hash_init(&ctx) < 0)
 		exit(1);
@@ -248,7 +318,7 @@ int main(int argc, char *argv[])
 	gettimeofday(&tv, NULL);
 	ckpt_dbg("start time %lu [s]\n", tv.tv_sec);
 
-	ctx.init_pid = getpid();
+	ctx.coord_pid = getpid();
 	ctx.args = &args;
 
 	setpgrp();
@@ -282,11 +352,76 @@ int main(int argc, char *argv[])
 
 	hash_exit(&ctx);
 
-	ret = ckpt_make_tree(&ctx, &ctx.tasks_arr[0]);
+	/* catch SIGCHLD to detect errors during hierarchy creation */
+	global_sigchld_handler = signal(SIGCHLD, sigchld_handler);
+	/* catch SIGINT to propagate ctrl-c to the restarted tasks */
+	global_sigint_handler = signal(SIGINT, sigint_handler);
 
-	/* if all is well, won't reach here */
-	ckpt_dbg("c/r make tree failed ?\n");
-	return 1;
+	pid = ckpt_fork_tree(&ctx);
+	if (pid < 0)
+		exit(1);
+
+	/*
+	 * The 'peaceful_handler' does nothing, but ensures that a
+	 * signal will interrupt the system call. Together with the
+	 * signal handler above we have:
+	 * - If the restarting root-task die before we change the
+	 *   handler, we catch it and report error
+	 * - If it dies during the restart, the system call will be
+	 *   interrupted, and we will report the error
+	 * - If it dies after the restart succeeds, we will ignore
+	 *
+	 * The only case not covered is whenthe root-task dies right
+	 * between changing the handler and calling restart(2). In
+	 * this case we currently don't detect the error, and may
+	 * hang until interrupted (waiting in restart(2) for tasks
+	 * to reach their first sync point). 
+	 *
+	 * TODO: fix this little race ...
+	 */
+	signal(SIGCHLD, peaceful_handler);
+	ret = restart(ctx.coord_pid, STDIN_FILENO, 0);
+
+	if (ret < 0) {
+		perror("restart failed");
+		ckpt_dbg("c/r failed ?\n");
+		exit(1);
+	}
+
+	ckpt_dbg("c/r succeeded\n");
+	if (args.wait) {
+		ret = waitpid(pid, &status, 0);
+		if (ret < 0) {
+			perror("WEIRD: collect root task");
+			exit(1);
+		}
+	}
+
+	ret = 0;
+	sig = 0;
+
+	if (args.show_status && global_sent_sigint)
+		printf("Terminated\n");
+	if (WIFSIGNALED(status)) {
+		sig = WTERMSIG(status);
+		if (args.show_status && !global_sent_sigint)
+			printf("Killed %d\n", sig);
+		ckpt_dbg("task terminated with signal %d\n", sig);
+	} else if (WIFEXITED(status)) {
+		ret = WEXITSTATUS(status);
+		if (args.show_status)
+			printf("Exited %d\n", ret);
+		ckpt_dbg("task exited with status %d\n", ret);
+	}
+
+	if (args.copy_status) {
+		if (sig)
+			kill(getpid(), sig);
+		else
+			return ret;
+	}
+
+	return 0;
 }
 
 static inline struct task *ckpt_init_task(struct ckpt_ctx *ctx)
@@ -304,7 +439,7 @@ static int ckpt_build_tree(struct ckpt_ctx *ctx)
 	int i;
 
 	/*
-	 * Allow for additional tasks to be added on demans for
+	 * Allow for additional tasks to be added on demand for
 	 * referenced pids of dead tasks (each task can introduce at
 	 * most two: session and process group IDs), as well as for
 	 * placeholder tasks (each session id may have at most one)
@@ -605,6 +740,7 @@ static int ckpt_placeholder_task(struct ckpt_ctx *ctx, struct task *task)
 {
 	struct task *session = hash_lookup(ctx, task->sid);
 	struct task *holder = &ctx->tasks_arr[ctx->tasks_nr++];
+	int n = 0;
 
 	if (ctx->tasks_nr > ctx->tasks_max) {
 		/* shouldn't happen, beacuse we prepared enough */
@@ -621,6 +757,11 @@ static int ckpt_placeholder_task(struct ckpt_ctx *ctx, struct task *task)
 			ctx->tasks_pid = 2;
 		else
 			ctx->tasks_pid++;
+
+		if (n++ == INT_MAX) {	/* ohhh... */
+			ckpt_err("pid namsepace exhausted");
+			return -1;
+		}
 	} while (hash_lookup(ctx, ctx->tasks_pid));
 
 	holder->flags = TASK_DEAD;
@@ -690,6 +831,33 @@ static int ckpt_propagate_session(struct ckpt_ctx *ctx, struct task *task)
 		 task->creator != session);
 
 	return 0;
+}
+
+static int ckpt_fork_tree(struct ckpt_ctx *ctx)
+{
+	pid_t pid;
+	int ret;
+
+	switch ((pid = fork())) {
+	case -1:
+		perror("fork");
+		return -1;
+	default:
+		global_root_pid = pid;
+		ctx->init_pid = pid;
+		return pid;
+	case 0:
+		signal(SIGCHLD, global_sigchld_handler);
+		signal(SIGINT, global_sigint_handler);
+		ctx->init_pid = getpid();
+	}
+
+	ret = ckpt_make_tree(ctx, &ctx->tasks_arr[0]);
+
+	/* if all is well, won't reach here */
+	if (ret < 0)
+		ckpt_dbg("c/r root failed ?\n");
+	exit(1);
 }
 
 /*
@@ -795,9 +963,9 @@ static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 
 	/* on success this doesn't return */
 	ckpt_dbg("about to call sys_restart()\n");
-	ret = restart(ctx->init_pid, STDIN_FILENO, 0);
+	ret = restart(ctx->coord_pid, STDIN_FILENO, 0);
 	if (ret < 0)
-		perror("restart");
+		perror("task restore failed");
 	return ret;
 }
 
