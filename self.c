@@ -16,7 +16,7 @@
 #include <math.h>
 #include <sys/syscall.h>
 
-#include <linux/checkpoint_types.h>
+#include <linux/checkpoint.h>
 
 #define OUTFILE  "/tmp/cr-self.out"
 
