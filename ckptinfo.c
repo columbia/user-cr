@@ -273,7 +273,6 @@ static char *hdr_type_to_str(int type)
 	HDR_TO_STR(CKPT_HDR_IPC_SEM);
 
 #if defined(__i386__) || defined(__x86_64__)
-	HDR_TO_STR(CKPT_HDR_THREAD_TLS);
 	HDR_TO_STR(CKPT_HDR_CPU_FPU);
 	HDR_TO_STR(CKPT_HDR_MM_CONTEXT_LDT);
 #endif
