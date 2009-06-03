@@ -18,12 +18,14 @@
 #include <asm/unistd.h>
 #include <sys/syscall.h>
 
+#include <linux/checkpoint.h>
+
 int main(int argc, char *argv[])
 {
 	pid_t pid = getpid();
 	int ret;
 
-	ret = syscall(__NR_restart, pid, STDIN_FILENO, 0);
+	ret = syscall(__NR_restart, pid, STDIN_FILENO, RESTART_TASKSELF);
 	if (ret < 0)
 		perror("restart");
 
