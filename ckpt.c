@@ -16,7 +16,7 @@
 #include <unistd.h>
 #include <sys/syscall.h>
 
-#include <linux/checkpoint_types.h>
+#include <linux/checkpoint.h>
 
 static char usage_str[] =
 "usage: ckpt [opts] PID\n"
