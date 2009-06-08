@@ -282,6 +282,13 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		}
 	}
 
+#ifndef CLONE_NEWPID
+	if (args->pidns) {
+		printf("This mktree was compiled without support for --pidns.\n");
+		exit(1);
+	}
+#endif
+
 	if (args->pidns)
 		args->pids = 1;
 }
@@ -1010,11 +1017,17 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 		flags |= CLONE_PARENT;
 	}
 
-	/* select pid if --pids (but not new pidns), otherwise it's 0 */
-	if (child->flags & TASK_NEWPID)
-		flags |= CLONE_NEWPID;
-	else if (ctx->args->pids)
+	/* select pid if --pids,  otherwise it's 0 */
+	if (ctx->args->pids)
 		pid = child->pid;
+
+#ifdef CLONE_NEWPID
+	/* but for new pidns, don't specify a pid */
+ 	if (child->flags & TASK_NEWPID) {
+		flags |= CLONE_NEWPID;
+		pid = 0;
+	}
+#endif
 
 	pid = clone_with_pids(ckpt_fork_stub, stack, flags, &pid_set, child);
 	if (pid < 0) {
@@ -1534,7 +1547,7 @@ static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
 static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
 			   struct target_pid_set *target_pids, void *arg)
 {
-	return clone(fd, child_stack, flags, arg);
+	return clone(fn, child_stack, flags, arg);
 }
 #endif
 
