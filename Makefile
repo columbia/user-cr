@@ -17,6 +17,9 @@ WARNS := -Wall -Wstrict-prototypes -Wno-trigraphs
 # compiler flags
 CFLAGS += -g $(WARNS) $(PATHS) $(DEBUG)
 
+# install dir
+INSTALL_DIR = /bin
+
 PROGS =	self ckpt rstr mktree ckptinfo
 
 LDLIBS = -lm
@@ -25,6 +28,10 @@ all: $(PROGS)
 	@make -C test
 
 %.o:	%.c
+
+install:
+	@echo /usr/bin/install -m 755 mktree ckpt rstr ckptinfo $(INSTALL_DIR)
+	@/usr/bin/install -m 755 mktree ckpt rstr ckptinfo $(INSTALL_DIR)
 
 clean:
 	@rm -f $(PROGS) *~ *.o
