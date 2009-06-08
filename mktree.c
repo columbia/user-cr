@@ -27,6 +27,7 @@
 #include <asm/unistd.h>
 #include <sys/syscall.h>
 
+#include <linux/sched.h>
 #include <linux/checkpoint.h>
 #include <linux/checkpoint_hdr.h>
 #include <asm/checkpoint_hdr.h>
@@ -37,8 +38,9 @@ static char usage_str[] =
 "  the original tasks tree, and then calling sys_restart by each task.\n"
 "\tOptions:\n"
 "\t -h,--help             print this help message\n"
-"\t -p,--pids             restore original tasks' pids (in container)\n"
-"\t -P,--no-pids          do not restore original tasks' pids (default)\n"
+"\t -p,--pidns            create a new pid namspace\n"
+"\t -P,--no-pidns         do not create a new pid namspace (default)\n"
+"\t    --pids             restore original pids (implied by --pidns)\n"
 "\t -w,--wait             wait for (root) task to termiate (default)\n"
 "\t    --show-status      show exit status of (root) task (implies -w)\n"
 "\t    --copy-status      imitate exit status of (root) task (implies -w)\n"
@@ -46,21 +48,28 @@ static char usage_str[] =
 "";
 
 /*
- * 'mktree' has two modes of operation:
+ * By default, 'mktree' creates a new pid namespace in which the
+ * restart takes place, using the original pids from the time of the
+ * checkpoint. This requires that CLONE_NEWPID and clone_with_pids()
+ * be enabled.
  *
- * (1) with pids (default): assumes that original pids from the time of the
- *   checkpoint are restored. For this, 'mktree' must be the init task of a
- *   fresh container. (Also requires a method to clone-with-pid).
+ * Restart can also occur in the current namespace, however pids from
+ * the time of the checkpoint may be already in use then. Therefore,
+ * by default, 'mktree' creates an equivalen tree without restoring
+ * the original pids, assuming that the application can tolerate this.
+ * For this, the 'ckpt_hdr_pids' array is transformed on-the-fly
+ * before it is fed to the kernel.
  *
- * (2) no-pids: creates an equivalent tree without restoring the original
- *   pids, assuming that the application can tolerate this. For this, the
- *   'ckpt_hdr_pids' array is transformed on-the-fly before it is handed to
- *   the restart syscall.
+ * If the user specifies "--pids" for a restart in the currnet namespace
+ * then 'mktree' will attempt to create the new tree with the original
+ * pids from the time of the checkpoint, if possible. This requires
+ * that clone_with_pids() be enabled.
  *
- * To re-create the tasks tree in user space, 'mktree' reads the header and
- * tree data from the checkpoint image tree. It makes up for the data that
- * was consumed by using a helper process that provides the data back to
- * the restart syscall, followed by the rest of the checkpoint image stream.
+ * To re-create the tasks tree in user space, 'mktree' reads the
+ * header and tree data from the checkpoint image tree. It makes up
+ * for the data that was consumed by using a helper process that
+ * provides the data back to the restart syscall, followed by the rest
+ * of the checkpoint image stream.
  */
 
 #ifdef CHECKPOINT_DEBUG
@@ -78,9 +87,15 @@ static char usage_str[] =
 #define ckpt_err(...)  \
 	fprintf(stderr, __VA_ARGS__)
 
-inline static int restart(int crid, int fd, unsigned long flags)
+/* FIXME: should be included from linux/types.h ? */
+struct target_pid_set {
+        int num_pids;
+        pid_t *target_pids;
+};
+
+inline static int restart(pid_t pid, int fd, unsigned long flags)
 {
-	return syscall(__NR_restart, crid, fd, flags);
+	return syscall(__NR_restart, pid, fd, flags);
 }
 
 #define BUFSIZE  (4 * 4096)
@@ -114,10 +129,12 @@ struct task {
 	struct ckpt_ctx *ctx;	/* points back to the c/r context */
 };
 
-#define TASK_DEAD	0x1	/* */
-#define TASK_THREAD	0x2	/* */
-#define TASK_SIBLING	0x4	/* */
-#define TASK_SESSION	0x8	/* */
+#define TASK_ROOT	0x1	/* */
+#define TASK_DEAD	0x2	/* */
+#define TASK_THREAD	0x4	/* */
+#define TASK_SIBLING	0x8	/* */
+#define TASK_SESSION	0x10	/* */
+#define TASK_NEWPID	0x20	/* */
 
 struct ckpt_ctx {
 	pid_t coord_pid;
@@ -153,9 +170,8 @@ static int ckpt_set_creator(struct ckpt_ctx *ctx, struct task *task);
 static int ckpt_placeholder_task(struct ckpt_ctx *ctx, struct task *task);
 static int ckpt_propagate_session(struct ckpt_ctx *ctx, struct task *session);
 
-static int ckpt_fork_tree(struct ckpt_ctx *ctx);
 static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task);
-static int ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child);
+static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child);
 static int ckpt_adjust_pids(struct ckpt_ctx *ctx);
 
 static void ckpt_abort(struct ckpt_ctx *ctx, char *str);
@@ -178,6 +194,9 @@ static int ckpt_read_header(struct ckpt_ctx *ctx);
 static int ckpt_read_header_arch(struct ckpt_ctx *ctx);
 static int ckpt_read_tree(struct ckpt_ctx *ctx);
 
+static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
+			   struct target_pid_set *target_pids, void *arg);
+
 static int hash_init(struct ckpt_ctx *ctx);
 static void hash_exit(struct ckpt_ctx *ctx);
 static int hash_insert(struct ckpt_ctx *ctx, long key, void *data);
@@ -195,6 +214,7 @@ struct pid_swap {
 
 struct args {
 	int pids;
+	int pidns;
 	int wait;
 	int show_status;
 	int copy_status;
@@ -210,8 +230,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 {
 	static struct option opts[] = {
 		{ "help",	no_argument,		NULL, 'h' },
-		{ "no-pids",	no_argument,		NULL, 'P' },
-		{ "pids",	no_argument,		NULL, 'p' },
+		{ "pidns",	no_argument,		NULL, 'p' },
+		{ "no-pidns",	no_argument,		NULL, 'P' },
+		{ "pids",	no_argument,		NULL, 3 },
 		{ "wait",	no_argument,		NULL, 'w' },
 		{ "show-status",	no_argument,	NULL, 1 },
 		{ "copy-status",	no_argument,	NULL, 2 },
@@ -234,10 +255,13 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		case 'h':
 			usage(usage_str);
 		case 'p':
-			args->pids = 1;
+			args->pidns = 1;
 			break;
 		case 'P':
-			args->pids = 0;
+			args->pidns = 0;
+			break;
+		case 3:
+			args->pids = 1;
 			break;
 		case 'w':
 			args->wait = 1;
@@ -257,6 +281,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			usage(usage_str);
 		}
 	}
+
+	if (args->pidns)
+		args->pids = 1;
 }
 
 static void peaceful_handler(int sig)
@@ -300,7 +327,6 @@ int main(int argc, char *argv[])
 	struct args args;
 	struct timeval tv;
 	int status, sig;
-	pid_t pid;
 	int ret;
 
 	memset(&ctx, 0, sizeof(ctx));
@@ -309,11 +335,6 @@ int main(int argc, char *argv[])
 		exit(1);
 
 	parse_args(&args, argc, argv);
-
-	if (args.pids) {
-		printf("mktree does not yet support '--pids' option");
-		exit(0);
-	}
 
 	gettimeofday(&tv, NULL);
 	ckpt_dbg("start time %lu [s]\n", tv.tv_sec);
@@ -357,8 +378,8 @@ int main(int argc, char *argv[])
 	/* catch SIGINT to propagate ctrl-c to the restarted tasks */
 	global_sigint_handler = signal(SIGINT, sigint_handler);
 
-	pid = ckpt_fork_tree(&ctx);
-	if (pid < 0)
+	global_root_pid = ckpt_fork_child(&ctx, &ctx.tasks_arr[0]);
+	if (global_root_pid < 0)
 		exit(1);
 
 	/*
@@ -390,7 +411,7 @@ int main(int argc, char *argv[])
 
 	ckpt_dbg("c/r succeeded\n");
 	if (args.wait) {
-		ret = waitpid(pid, &status, 0);
+		ret = waitpid(global_root_pid, &status, 0);
 		if (ret < 0) {
 			perror("WEIRD: collect root task");
 			exit(1);
@@ -584,6 +605,13 @@ static int ckpt_init_tree(struct ckpt_ctx *ctx)
 		if (ckpt_setup_task(ctx, ctx->pids_arr[i].vpgid) < 0)
 			return -1;
 	}
+
+	/* mark root task(s) */
+	ctx->tasks_arr[0].flags |= TASK_ROOT;
+
+	/* mark root for new pidns ? */
+	if (ctx->args->pidns == 1)
+		ctx->tasks_arr[0].flags |= TASK_NEWPID;
 
 	return 0;
 }
@@ -833,33 +861,6 @@ static int ckpt_propagate_session(struct ckpt_ctx *ctx, struct task *task)
 	return 0;
 }
 
-static int ckpt_fork_tree(struct ckpt_ctx *ctx)
-{
-	pid_t pid;
-	int ret;
-
-	switch ((pid = fork())) {
-	case -1:
-		perror("fork");
-		return -1;
-	default:
-		global_root_pid = pid;
-		ctx->init_pid = pid;
-		return pid;
-	case 0:
-		signal(SIGCHLD, global_sigchld_handler);
-		signal(SIGINT, global_sigint_handler);
-		ctx->init_pid = getpid();
-	}
-
-	ret = ckpt_make_tree(ctx, &ctx->tasks_arr[0]);
-
-	/* if all is well, won't reach here */
-	if (ret < 0)
-		ckpt_dbg("c/r root failed ?\n");
-	exit(1);
-}
-
 /*
  * Algorithm MakeForest
  * "Transparent Checkpoint/Restart of Multiple Processes on Commodity
@@ -972,14 +973,24 @@ static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 int ckpt_fork_stub(void *data)
 {
 	struct task *task = (struct task *) data;
+
+	/* root has some extra work */
+	if (task->flags & TASK_ROOT) {
+		signal(SIGCHLD, global_sigchld_handler);
+		signal(SIGINT, global_sigint_handler);
+		task->ctx->init_pid = getpid();
+		ckpt_dbg("root task pid %d\n", getpid());
+	}
+
 	return ckpt_make_tree(task->ctx, task);
 }
 
-static int ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
+static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 {
+	struct target_pid_set pid_set;
 	void *stack = NULL;
 	unsigned long flags = SIGCHLD;
-	pid_t pid;
+	pid_t pid = 0;
 
 	ckpt_dbg("forking child vpid %d flags %#x\n", child->pid, child->flags);
 
@@ -990,7 +1001,8 @@ static int ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 	}
 	stack += PTHREAD_STACK_MIN;
 
-	/* FIX: in 'pids' we need to call fork_with_pid() */
+	pid_set.target_pids = &pid;
+	pid_set.num_pids = 1;
 
 	if (child->flags & TASK_THREAD) {
 		flags |= CLONE_THREAD | CLONE_SIGHAND | CLONE_VM;
@@ -998,18 +1010,25 @@ static int ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 		flags |= CLONE_PARENT;
 	}
 
-	pid = clone(ckpt_fork_stub, stack, flags, child);
+	/* select pid if --pids (but not new pidns), otherwise it's 0 */
+	if (child->flags & TASK_NEWPID)
+		flags |= CLONE_NEWPID;
+	else if (ctx->args->pids)
+		pid = child->pid;
+
+	pid = clone_with_pids(ckpt_fork_stub, stack, flags, &pid_set, child);
 	if (pid < 0) {
 		perror("clone");
-		free(stack);
+		free(stack - PTHREAD_STACK_MIN);
+		return -1;
 	}
 
 	if (!(child->flags & TASK_THREAD))
 		free(stack - PTHREAD_STACK_MIN);
 
+	ckpt_dbg("forked child vpid %d (asked %d)\n", pid, child->pid);
 	return pid;
 }
-
 
 /*
  * ckpt_fork_feeder: create the feeder process and set a pipe to deliver
@@ -1452,6 +1471,72 @@ static int ckpt_write_tree(struct ckpt_ctx *ctx)
 
 	return 0;
 }
+
+#if defined(__i386__) && defined(__NR_clone_with_pids)
+/*
+ * libc doesn't support clone_with_pid() yet...
+ * (see: http://lkml.indiana.edu/hypermail/linux/kernel/9604.3/0204.html)
+ */
+static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
+			   struct target_pid_set *target_pids, void *arg)
+{
+	long retval;
+	void **newstack;
+
+	/*
+	 * Set up the stack for child:
+	 *  - the (void *) arg will be the argument for the child function
+	 *  - the fn pointer will be loaded into ebx after the clone
+	 */
+	newstack = (void **) child_stack;
+	*--newstack = arg;
+	*--newstack = fn;
+
+	__asm__  __volatile__(
+		 "movl %0, %%ebx\n\t"		/* flags -> 1st (ebx) */
+		 "movl %1, %%ecx\n\t"		/* newstack -> 2nd (ecx)*/
+		 "xorl %%edi, %%edi\n\t"	/* 0 -> 3rd (edi) */
+		 "xorl %%edx, %%edx\n\t"	/* 0 -> 4th (edx) */
+		 "pushl %%ebp\n\t"		/* save value of ebp */
+		 "movl %2, %%ebp\n\t"		/* flags -> 6th (ebp) */
+		:
+		:"b" (flags),
+		 "c" (newstack),
+		 "r" (target_pids)
+		);
+
+	__asm__ __volatile__(
+		 "int $0x80\n\t"	/* Linux/i386 system call */
+		 "testl %0,%0\n\t"	/* check return value */
+		 "jne 1f\n\t"		/* jump if parent */
+		 "popl %%ebx\n\t"	/* get subthread function */
+		 "call *%%ebx\n\t"	/* start subthread function */
+		 "movl %2,%0\n\t"
+		 "int $0x80\n"		/* exit system call: exit subthread */
+		 "1:\n\t"
+		 "popl %%ebp\t"		/* restore parent's ebp */
+		:"=a" (retval)
+		:"0" (__NR_clone_with_pids), "i" (__NR_exit)
+		:"ebx", "ecx"
+		);
+
+	if (retval < 0) {
+		errno = -retval;
+		retval = -1;
+	}
+	return retval;
+}
+#else
+/*
+ * libc doesn't support clone_with_pid() yet...
+ * on other architectures fallback to regular clone(2)
+ */
+static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
+			   struct target_pid_set *target_pids, void *arg)
+{
+	return clone(fd, child_stack, flags, arg);
+}
+#endif
 
 /*
  * a simple hash implementation
