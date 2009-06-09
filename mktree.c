@@ -38,7 +38,7 @@ static char usage_str[] =
 "  the original tasks tree, and then calling sys_restart by each task.\n"
 "\tOptions:\n"
 "\t -h,--help             print this help message\n"
-"\t -p,--pidns            create a new pid namspace\n"
+"\t -p,--pidns            create a new pid namspace for root task\n"
 "\t -P,--no-pidns         do not create a new pid namspace (default)\n"
 "\t    --pids             restore original pids (implied by --pidns)\n"
 "\t -w,--wait             wait for (root) task to termiate (default)\n"
@@ -87,12 +87,6 @@ static char usage_str[] =
 #define ckpt_err(...)  \
 	fprintf(stderr, __VA_ARGS__)
 
-/* FIXME: should be included from linux/types.h ? */
-struct target_pid_set {
-        int num_pids;
-        pid_t *target_pids;
-};
-
 inline static int restart(pid_t pid, int fd, unsigned long flags)
 {
 	return syscall(__NR_restart, pid, fd, flags);
@@ -137,7 +131,6 @@ struct task {
 #define TASK_NEWPID	0x20	/* */
 
 struct ckpt_ctx {
-	pid_t coord_pid;
 	pid_t init_pid;
 	int pipe_in;
 	int pipe_out;
@@ -170,7 +163,11 @@ static int ckpt_set_creator(struct ckpt_ctx *ctx, struct task *task);
 static int ckpt_placeholder_task(struct ckpt_ctx *ctx, struct task *task);
 static int ckpt_propagate_session(struct ckpt_ctx *ctx, struct task *session);
 
+static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx);
+static int ckpt_coordinator(struct ckpt_ctx *ctx);
+
 static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task);
+static int ckpt_collect_child(pid_t pid, int mimic, int verbose);
 static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child);
 static int ckpt_adjust_pids(struct ckpt_ctx *ctx);
 
@@ -333,7 +330,6 @@ int main(int argc, char *argv[])
 	struct ckpt_ctx ctx;
 	struct args args;
 	struct timeval tv;
-	int status, sig;
 	int ret;
 
 	memset(&ctx, 0, sizeof(ctx));
@@ -346,7 +342,6 @@ int main(int argc, char *argv[])
 	gettimeofday(&tv, NULL);
 	ckpt_dbg("start time %lu [s]\n", tv.tv_sec);
 
-	ctx.coord_pid = getpid();
 	ctx.args = &args;
 
 	setpgrp();
@@ -380,12 +375,139 @@ int main(int argc, char *argv[])
 
 	hash_exit(&ctx);
 
+	if (ctx.args->pidns && ctx.tasks_arr[0].pid) {
+		ckpt_dbg("new pidns without init\n"); 
+		ret = ckpt_coordinator_pidns(&ctx);
+	} else {
+		if (ctx.args->pidns) {
+			ckpt_dbg("new pidns with init\n"); 
+			ctx.tasks_arr[0].flags |= TASK_NEWPID;
+		}
+		ret = ckpt_coordinator(&ctx);
+	}
+
+	return ret;
+}
+
+static int ckpt_parse_status(int status, int mimic, int verbose)
+{
+	int sig = 0;
+	int ret = 0;
+
+	if (verbose && global_sent_sigint)
+		printf("Terminated\n");
+	if (WIFSIGNALED(status)) {
+		sig = WTERMSIG(status);
+		if (verbose && !global_sent_sigint)
+			printf("Killed %d\n", sig);
+		ckpt_dbg("task terminated with signal %d\n", sig);
+	} else if (WIFEXITED(status)) {
+		ret = WEXITSTATUS(status);
+		if (verbose)
+			printf("Exited %d\n", ret);
+		ckpt_dbg("task exited with status %d\n", ret);
+	}
+
+	if (mimic) {
+		if (sig)
+			kill(getpid(), sig);
+		else
+			return ret;
+	}
+
+	return 0;
+}
+
+static int ckpt_pretend_reaper(struct ckpt_ctx *ctx)
+{
+	int root_status = 0;
+	int status;
+	pid_t pid;
+
+	while (1) {
+		pid = waitpid(-1, &status, 0);
+		if (pid < 0 && errno == ECHILD)
+			break;
+		if (pid == global_root_pid)
+			root_status = status;
+	}
+
+	return ckpt_parse_status(status, 1, 0);
+}
+
+
+static int ckpt_collect_child(pid_t pid, int mimic, int verbose)
+{
+	int status;
+
+	pid = waitpid(pid, &status, 0);
+	if (pid < 0) {
+		perror("WEIRD: collect child task");
+		exit(1);
+	}
+
+	return ckpt_parse_status(status, mimic, verbose);
+
+}
+
+#ifdef CLONE_NEWPID
+static int __ckpt_coordinator(void *arg)
+{
+	return ckpt_coordinator((struct ckpt_ctx *) arg);
+}
+
+static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
+{
+	void *stack = NULL;
+	pid_t pid;
+	int show, copy;
+
+	ckpt_dbg("forking coordinator in new pidns\n");
+
+	stack = malloc(PTHREAD_STACK_MIN);
+	if (!stack) {
+		perror("coordinator stack malloc");
+		return -1;
+	}
+	stack += PTHREAD_STACK_MIN;
+
+	copy = ctx->args->copy_status;
+	show = ctx->args->show_status;
+
+	ctx->args->copy_status = 1;
+	ctx->args->show_status = 0;
+
+	pid = clone(__ckpt_coordinator, stack, CLONE_NEWPID | SIGCHLD, ctx);
+	free(stack - PTHREAD_STACK_MIN);
+
+	if (pid < 0) {
+		perror("clone coordinator");
+		return pid;
+	}
+
+	if (ctx->args->wait)
+		return ckpt_collect_child(pid, copy, show);
+	else
+		return 0;
+}
+#else
+static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx, int *status)
+{
+	printf("lgoical error: ckpt_coordinator_pidns unexpected\n");
+	exit(1);
+}
+#endif
+
+static int ckpt_coordinator(struct ckpt_ctx *ctx)
+{
+	int ret;
+
 	/* catch SIGCHLD to detect errors during hierarchy creation */
 	global_sigchld_handler = signal(SIGCHLD, sigchld_handler);
 	/* catch SIGINT to propagate ctrl-c to the restarted tasks */
 	global_sigint_handler = signal(SIGINT, sigint_handler);
 
-	global_root_pid = ckpt_fork_child(&ctx, &ctx.tasks_arr[0]);
+	global_root_pid = ckpt_fork_child(ctx, &ctx->tasks_arr[0]);
 	if (global_root_pid < 0)
 		exit(1);
 
@@ -408,48 +530,39 @@ int main(int argc, char *argv[])
 	 * TODO: fix this little race ...
 	 */
 	signal(SIGCHLD, peaceful_handler);
-	ret = restart(ctx.coord_pid, STDIN_FILENO, 0);
+	ret = restart(global_root_pid, STDIN_FILENO, 0);
 
 	if (ret < 0) {
 		perror("restart failed");
-		ckpt_dbg("c/r failed ?\n");
+		ckpt_dbg("restart failed ?\n");
 		exit(1);
 	}
 
-	ckpt_dbg("c/r succeeded\n");
-	if (args.wait) {
-		ret = waitpid(global_root_pid, &status, 0);
-		if (ret < 0) {
-			perror("WEIRD: collect root task");
-			exit(1);
-		}
-	}
+	ckpt_dbg("restart succeeded\n");
 
-	ret = 0;
-	sig = 0;
+	/*
+	 * In the --pidns when root task isn't container init, we
+	 * need this coordinator to stay around and play the role
+	 * of init collecting all children until the all tasks are
+	 * gone. Otherwise, container will die as soon as we exit.
+	 *
+	 * TODO: actually do the above ...
+	 */
+	if (ctx->tasks_arr[0].pid)
+		ret = ckpt_pretend_reaper(ctx);
+	else if (ctx->args->wait)
+		ret = ckpt_collect_child(global_root_pid,
+					 ctx->args->copy_status,
+					 ctx->args->show_status);
+	else
+		ret = 0;
 
-	if (args.show_status && global_sent_sigint)
-		printf("Terminated\n");
-	if (WIFSIGNALED(status)) {
-		sig = WTERMSIG(status);
-		if (args.show_status && !global_sent_sigint)
-			printf("Killed %d\n", sig);
-		ckpt_dbg("task terminated with signal %d\n", sig);
-	} else if (WIFEXITED(status)) {
-		ret = WEXITSTATUS(status);
-		if (args.show_status)
-			printf("Exited %d\n", ret);
-		ckpt_dbg("task exited with status %d\n", ret);
-	}
+	if (ret < 0)
+		ckpt_dbg("c/r failed ?\n");
+	else
+		ckpt_dbg("c/r succeeded\n");
 
-	if (args.copy_status) {
-		if (sig)
-			kill(getpid(), sig);
-		else
-			return ret;
-	}
-
-	return 0;
+	return ret;
 }
 
 static inline struct task *ckpt_init_task(struct ckpt_ctx *ctx)
@@ -615,10 +728,6 @@ static int ckpt_init_tree(struct ckpt_ctx *ctx)
 
 	/* mark root task(s) */
 	ctx->tasks_arr[0].flags |= TASK_ROOT;
-
-	/* mark root for new pidns ? */
-	if (ctx->args->pidns == 1)
-		ctx->tasks_arr[0].flags |= TASK_NEWPID;
 
 	return 0;
 }
@@ -971,7 +1080,7 @@ static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 
 	/* on success this doesn't return */
 	ckpt_dbg("about to call sys_restart()\n");
-	ret = restart(ctx->coord_pid, STDIN_FILENO, 0);
+	ret = restart(0, STDIN_FILENO, 0);
 	if (ret < 0)
 		perror("task restore failed");
 	return ret;
@@ -1010,6 +1119,10 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 
 	pid_set.target_pids = &pid;
 	pid_set.num_pids = 1;
+	pid_set.flags = 0;
+
+	if (child->flags & TASK_ROOT)
+		pid_set.flags |= CLONE_RESTART;
 
 	if (child->flags & TASK_THREAD) {
 		flags |= CLONE_THREAD | CLONE_SIGHAND | CLONE_VM;
