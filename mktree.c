@@ -1719,6 +1719,9 @@ static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
 	return retval;
 }
 #else
+
+#error mktree requires arch support for clone_with_pids() syscall
+
 /*
  * libc doesn't support clone_with_pid() yet...
  * on other architectures fallback to regular clone(2)
