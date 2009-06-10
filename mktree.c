@@ -39,12 +39,15 @@ static char usage_str[] =
 "\tOptions:\n"
 "\t -h,--help             print this help message\n"
 "\t -p,--pidns            create a new pid namspace for root task\n"
+"\t    --pidns-intr=SIG   send SIG to root task on SIGINT (default: SIGKILL)\n"
 "\t -P,--no-pidns         do not create a new pid namspace (default)\n"
 "\t    --pids             restore original pids (implied by --pidns)\n"
 "\t -w,--wait             wait for (root) task to termiate (default)\n"
 "\t    --show-status      show exit status of (root) task (implies -w)\n"
 "\t    --copy-status      imitate exit status of (root) task (implies -w)\n"
 "\t -W,--no-wait          do not wait for (root) task to terminate\n"
+"\t -v,--verbose          verbose output\n"
+"\t -d,--debug            debugging output\n"
 "";
 
 /*
@@ -73,10 +76,16 @@ static char usage_str[] =
  */
 
 #ifdef CHECKPOINT_DEBUG
-#define ckpt_dbg(_format, _args...)  \
-	fprintf(stderr, "<%d>" _format, gettid(), ##_args)
-#define ckpt_dbg_cont(_format, _args...)  \
-	fprintf(stderr, _format, ##_args)
+#define ckpt_dbg(_format, _args...)					\
+	do {								\
+		if (global_debug)					\
+			fprintf(stderr, "<%d>" _format, gettid(), ##_args); \
+	} while (0)
+#define ckpt_dbg_cont(_format, _args...)			\
+	do {							\
+		if (global_debug)				\
+			fprintf(stderr, _format, ##_args);	\
+	} while (0)
 #else
 #define ckpt_dbg(_format, _args...)  \
 	do { } while (0)
@@ -86,6 +95,12 @@ static char usage_str[] =
 
 #define ckpt_err(...)  \
 	fprintf(stderr, __VA_ARGS__)
+
+#define ckpt_verbose(...)			\
+	do {					\
+		if (global_verbose)		\
+			printf(__VA_ARGS__);	\
+	} while(0)
 
 inline static int restart(pid_t pid, int fd, unsigned long flags)
 {
@@ -152,7 +167,11 @@ struct ckpt_ctx {
 	struct args *args;
 };
 
+int global_debug;
+int global_verbose;
+pid_t global_coord_pid;
 pid_t global_root_pid;
+int global_send_sigint = -1;
 int global_sent_sigint;
 sighandler_t global_sigchld_handler;
 sighandler_t global_sigint_handler;
@@ -228,15 +247,20 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	static struct option opts[] = {
 		{ "help",	no_argument,		NULL, 'h' },
 		{ "pidns",	no_argument,		NULL, 'p' },
+		{ "pidns-signal",	required_argument,	NULL, '4' },
 		{ "no-pidns",	no_argument,		NULL, 'P' },
 		{ "pids",	no_argument,		NULL, 3 },
 		{ "wait",	no_argument,		NULL, 'w' },
 		{ "show-status",	no_argument,	NULL, 1 },
 		{ "copy-status",	no_argument,	NULL, 2 },
 		{ "no-wait",	no_argument,		NULL, 'W' },
+		{ "verbose",	no_argument,		NULL, 'v' },
+		{ "debug",	no_argument,		NULL, 'd' },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hpPwW";
+	static char optc[] = "hdvpPwW";
+
+	int sig;
 
 	/* defaults */
 	memset(args, 0, sizeof(*args));
@@ -251,11 +275,22 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			exit(1);
 		case 'h':
 			usage(usage_str);
+		case 'v':
+			global_verbose = 1;
+			break;
 		case 'p':
 			args->pidns = 1;
 			break;
 		case 'P':
 			args->pidns = 0;
+			break;
+		case 4:
+			sig = atoi(optarg);
+			if (sig < 0 || sig >= NSIG) {
+				printf("mktree: invalid signal number\n");
+				exit(1);
+			}
+			global_send_sigint = sig;
 			break;
 		case 3:
 			args->pids = 1;
@@ -274,6 +309,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			args->wait = 1;
 			args->copy_status = 1;
 			break;
+		case 'd':
+			global_debug = 1;
+			break;
 		default:
 			usage(usage_str);
 		}
@@ -281,7 +319,16 @@ static void parse_args(struct args *args, int argc, char *argv[])
 
 #ifndef CLONE_NEWPID
 	if (args->pidns) {
-		printf("This mktree was compiled without support for --pidns.\n");
+		printf("This version of mktree was compiled without "
+		       "support for --pidns.\n");
+		exit(1);
+	}
+#endif
+
+#ifndef CHECKPOINT_DEBUG
+	if (global_debug) {
+		printf("This version of mktree was compiled without "
+		       "support for --debug.\n");
 		exit(1);
 	}
 #endif
@@ -301,10 +348,14 @@ static void sigchld_handler(int sig)
 	int status;
 	pid_t pid;
 
-	pid = waitpid(0, &status, WNOHANG);
-	if (pid < 0) {
-		perror("WEIRD !! child collection failed");
-		exit(1);
+	while (1) {
+		pid = waitpid(0, &status, WNOHANG);
+		if (pid < 0 && errno != EINTR) {
+			perror("WEIRD !! child collection failed");
+			exit(1);
+		}
+		if (pid > 0)
+			break;
 	}
 
 	if (WIFEXITED(status))
@@ -319,17 +370,22 @@ static void sigchld_handler(int sig)
 
 static void sigint_handler(int sig)
 {
+	if (global_coord_pid) {
+		kill(-global_coord_pid, SIGINT);
+		kill(global_coord_pid, SIGINT);
+		global_sent_sigint = 1;
+	}
 	if (global_root_pid) {
-		kill(-global_root_pid, SIGINT);
-		kill(global_root_pid, SIGINT);
+		kill(-global_root_pid, global_send_sigint);
+		kill(global_root_pid, global_send_sigint);
 		global_sent_sigint = 1;
 	}
 }
+
 int main(int argc, char *argv[])
 {
 	struct ckpt_ctx ctx;
 	struct args args;
-	struct timeval tv;
 	int ret;
 
 	memset(&ctx, 0, sizeof(ctx));
@@ -338,9 +394,6 @@ int main(int argc, char *argv[])
 		exit(1);
 
 	parse_args(&args, argc, argv);
-
-	gettimeofday(&tv, NULL);
-	ckpt_dbg("start time %lu [s]\n", tv.tv_sec);
 
 	ctx.args = &args;
 
@@ -375,14 +428,24 @@ int main(int argc, char *argv[])
 
 	hash_exit(&ctx);
 
-	if (ctx.args->pidns && ctx.tasks_arr[0].pid) {
-		ckpt_dbg("new pidns without init\n"); 
+	/* catch SIGINT to propagate ctrl-c to the restarted tasks */
+	global_sigint_handler = signal(SIGINT, sigint_handler);
+
+	if (ctx.args->pidns && ctx.tasks_arr[0].pid != 1) {
+		ckpt_dbg("new pidns without init\n");
+		if (global_send_sigint == -1)
+			global_send_sigint = SIGINT;
 		ret = ckpt_coordinator_pidns(&ctx);
+	} else if (ctx.args->pidns) {
+		ckpt_dbg("new pidns with init\n");
+		ctx.tasks_arr[0].flags |= TASK_NEWPID;
+		if (global_send_sigint == -1)
+			global_send_sigint = SIGKILL;
+		ret = ckpt_coordinator(&ctx);
 	} else {
-		if (ctx.args->pidns) {
-			ckpt_dbg("new pidns with init\n"); 
-			ctx.tasks_arr[0].flags |= TASK_NEWPID;
-		}
+		ckpt_dbg("subtree (existing pidns)\n");
+		if (global_send_sigint == -1)
+			global_send_sigint = SIGINT;
 		ret = ckpt_coordinator(&ctx);
 	}
 
@@ -409,10 +472,13 @@ static int ckpt_parse_status(int status, int mimic, int verbose)
 	}
 
 	if (mimic) {
-		if (sig)
+		if (sig) {
+			ckpt_dbg("mimic sig %d\n", sig);
 			kill(getpid(), sig);
-		else
+		} else {
+			ckpt_dbg("mimic ret %d\n", ret);
 			return ret;
+		}
 	}
 
 	return 0;
@@ -460,7 +526,7 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 {
 	void *stack = NULL;
 	pid_t pid;
-	int show, copy;
+	int copy;
 
 	ckpt_dbg("forking coordinator in new pidns\n");
 
@@ -472,10 +538,7 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 	stack += PTHREAD_STACK_MIN;
 
 	copy = ctx->args->copy_status;
-	show = ctx->args->show_status;
-
 	ctx->args->copy_status = 1;
-	ctx->args->show_status = 0;
 
 	pid = clone(__ckpt_coordinator, stack, CLONE_NEWPID | SIGCHLD, ctx);
 	free(stack - PTHREAD_STACK_MIN);
@@ -486,7 +549,7 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 	}
 
 	if (ctx->args->wait)
-		return ckpt_collect_child(pid, copy, show);
+		return ckpt_collect_child(pid, copy, ctx->args->show_status);
 	else
 		return 0;
 }
@@ -502,10 +565,10 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 {
 	int ret;
 
+	global_coord_pid = 0;
+
 	/* catch SIGCHLD to detect errors during hierarchy creation */
 	global_sigchld_handler = signal(SIGCHLD, sigchld_handler);
-	/* catch SIGINT to propagate ctrl-c to the restarted tasks */
-	global_sigint_handler = signal(SIGINT, sigint_handler);
 
 	global_root_pid = ckpt_fork_child(ctx, &ctx->tasks_arr[0]);
 	if (global_root_pid < 0)
@@ -530,14 +593,17 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 	 * TODO: fix this little race ...
 	 */
 	signal(SIGCHLD, peaceful_handler);
+
 	ret = restart(global_root_pid, STDIN_FILENO, 0);
 
 	if (ret < 0) {
 		perror("restart failed");
+		ckpt_verbose("Failed\n");
 		ckpt_dbg("restart failed ?\n");
 		exit(1);
 	}
 
+	ckpt_verbose("Success\n");
 	ckpt_dbg("restart succeeded\n");
 
 	/*
@@ -548,7 +614,7 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 	 *
 	 * TODO: actually do the above ...
 	 */
-	if (ctx->tasks_arr[0].pid)
+	if (ctx->tasks_arr[0].pid != 1)
 		ret = ckpt_pretend_reaper(ctx);
 	else if (ctx->args->wait)
 		ret = ckpt_collect_child(global_root_pid,
