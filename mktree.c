@@ -167,6 +167,12 @@ struct ckpt_ctx {
 	struct args *args;
 };
 
+/* this really belongs to some kernel header ! */
+struct target_pid_set {
+	int num_pids;
+	pid_t *target_pids;
+};
+
 int global_debug;
 int global_verbose;
 pid_t global_coord_pid;
@@ -335,6 +341,14 @@ static void parse_args(struct args *args, int argc, char *argv[])
 
 	if (args->pidns)
 		args->pids = 1;
+
+#ifndef __NR_clone_with_pid
+	if (args->pids) {
+		printf("This version of mktree was compiledw without "
+		       "support for --pids.\n");
+		exit(1);
+	}
+#endif
 }
 
 static void peaceful_handler(int sig)
@@ -1185,10 +1199,6 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 
 	pid_set.target_pids = &pid;
 	pid_set.num_pids = 1;
-	pid_set.flags = 0;
-
-	if (child->flags & TASK_ROOT)
-		pid_set.flags |= CLONE_RESTART;
 
 	if (child->flags & TASK_THREAD) {
 		flags |= CLONE_THREAD | CLONE_SIGHAND | CLONE_VM;
@@ -1719,9 +1729,6 @@ static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
 	return retval;
 }
 #else
-
-#error mktree requires arch support for clone_with_pids() syscall
-
 /*
  * libc doesn't support clone_with_pid() yet...
  * on other architectures fallback to regular clone(2)
