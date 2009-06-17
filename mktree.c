@@ -342,9 +342,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	if (args->pidns)
 		args->pids = 1;
 
-#ifndef __NR_clone_with_pid
+#ifndef __NR_clone_with_pids
 	if (args->pids) {
-		printf("This version of mktree was compiledw without "
+		printf("This version of mktree was compiled without "
 		       "support for --pids.\n");
 		exit(1);
 	}
@@ -1145,18 +1145,26 @@ static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 		exit(0);
 	}
 
-	/* in 'no-pids' mode we need to report old/new pids via pipe */
-	if (!ctx->args->pids) {
-		/* communicate via pipe that all is well */
-		swap.old = task->pid;
-		swap.new = gettid();
-		ret = write(ctx->pipe_out, &swap, sizeof(swap));
-		if (ret != sizeof(swap)) {
-			perror("write swap");
-			return -1;
-		}
-		close(ctx->pipe_out);
+	/*
+	 * In '--no-pidns' (and not '--pids') mode we restart with
+	 * pids different than originals, so report old/new pids via
+	 * pipe to the feeder.
+	 *
+	 * However, even with '--pids', coordinator needs to create
+	 * entire hierarchy before (in kernel) reading the image.
+	 * Always reporting pids ensures that feeder only feeds data
+	 * (and coodinator reads data), the when hierarchy is ready.
+	 */
+
+	/* communicate via pipe that all is well */
+	swap.old = task->pid;
+	swap.new = gettid();
+	ret = write(ctx->pipe_out, &swap, sizeof(swap));
+	if (ret != sizeof(swap)) {
+		perror("write swap");
+		return -1;
 	}
+	close(ctx->pipe_out);
 
 	/* on success this doesn't return */
 	ckpt_dbg("about to call sys_restart()\n");
@@ -1206,7 +1214,7 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 		flags |= CLONE_PARENT;
 	}
 
-	/* select pid if --pids,  otherwise it's 0 */
+	/* select pid if --pids, otherwise it's 0 */
 	if (ctx->args->pids)
 		pid = child->pid;
 
@@ -1247,17 +1255,14 @@ static int ckpt_fork_feeder(struct ckpt_ctx *ctx)
 	int pipe_child[2];	/* for children to report status */
 	int pipe_feed[2];	/* for feeder to provide input */
 	int status, ret;
-	int nopids;
 	pid_t pid;
-
-	nopids = !ctx->args->pids;
 
 	if (pipe(&pipe_feed[0])) {
 		perror("pipe");
 		exit(1);
 	}
 
-	if (nopids && pipe(&pipe_child[0]) < 0) {
+	if (pipe(&pipe_child[0]) < 0) {
 		perror("pipe");
 		exit(1);
 	}
@@ -1268,10 +1273,8 @@ static int ckpt_fork_feeder(struct ckpt_ctx *ctx)
 		exit(1);
 	default:
 		/* children pipe (if --no-pids) */
-		if (nopids) {
-			close(pipe_child[0]);
-			ctx->pipe_out = pipe_child[1];
-		}
+		close(pipe_child[0]);
+		ctx->pipe_out = pipe_child[1];
 		/* feeder pipe */
 		close(pipe_feed[1]);
 		if (pipe_feed[0] != STDIN_FILENO) {
@@ -1302,10 +1305,8 @@ static int ckpt_fork_feeder(struct ckpt_ctx *ctx)
 			exit(0);
 		}
 		/* children pipe (if --no-pids) */
-		if (nopids) {
-			close(pipe_child[1]);
-			ctx->pipe_in = pipe_child[0];
-		}
+		close(pipe_child[1]);
+		ctx->pipe_in = pipe_child[0];
 		/* feeder pipe */
 		close(pipe_feed[0]);
 		if (pipe_feed[1] != STDOUT_FILENO) {
@@ -1336,11 +1337,8 @@ static int ckpt_do_feeder(struct ckpt_ctx *ctx)
 {
 	int ret;
 
-	if (!ctx->args->pids) {
-		ret = ckpt_adjust_pids(ctx);
-		if (ret < 0)
-			return ret;
-	}
+	if (ckpt_adjust_pids(ctx) < 0)
+		ckpt_abort(ctx, "collect pids");
 
 	if (ckpt_write_header(ctx) < 0)
 		ckpt_abort(ctx, "write c/r header");
@@ -1405,6 +1403,11 @@ static int ckpt_adjust_pids(struct ckpt_ctx *ctx)
 			free(copy_arr);
 			ckpt_abort(ctx, "read pipe");
 		}
+
+		/* swapping isn't needed with '--pids' */
+		if (ctx->args->pids)
+			continue;
+
 		ckpt_dbg("c/r swap old %d new %d\n", swap.old, swap.new);
 		for (m = 0; m < ctx->pids_nr; m++) {
 			if (ctx->pids_arr[m].vpid == swap.old)
