@@ -26,6 +26,7 @@
 #include <sys/wait.h>
 #include <asm/unistd.h>
 #include <sys/syscall.h>
+#include <sys/prctl.h>
 
 #include <linux/sched.h>
 #include <linux/checkpoint.h>
@@ -1177,6 +1178,19 @@ static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 int ckpt_fork_stub(void *data)
 {
 	struct task *task = (struct task *) data;
+
+	/*
+	 * when restart without pids, we wnsure prpoper cleanup of the
+	 * new hierarchy in case of coordinator death by asking to be
+	 * killed then. When restart succeeds, it will hvae replaced
+	 * this with the original value.
+	 */
+	if (task->ctx->args->pids) {
+		if (prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0) < 0) {
+			perror("prctl");
+			return -1;
+		}
+	}
 
 	/* root has some extra work */
 	if (task->flags & TASK_ROOT) {
