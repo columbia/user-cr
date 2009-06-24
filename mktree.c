@@ -31,7 +31,6 @@
 #include <linux/sched.h>
 #include <linux/checkpoint.h>
 #include <linux/checkpoint_hdr.h>
-#include <asm/checkpoint_hdr.h>
 
 static char usage_str[] =
 "usage: mktree [opts]\n"
@@ -1568,9 +1567,9 @@ static int ckpt_read_header(struct ckpt_ctx *ctx)
 	if (ret < 0)
 		return ret;
 
-	if (h->uts_release_len > BUFSIZE / 4 ||
-	    h->uts_version_len > BUFSIZE / 4 ||
-	    h->uts_machine_len > BUFSIZE / 4) {
+	if (h->constants.uts_release_len > BUFSIZE / 4 ||
+	    h->constants.uts_version_len > BUFSIZE / 4 ||
+	    h->constants.uts_machine_len > BUFSIZE / 4) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -1578,15 +1577,15 @@ static int ckpt_read_header(struct ckpt_ctx *ctx)
 	ptr = (char *) h;
 
 	ptr += ((struct ckpt_hdr *) ptr)->len;
-	ret = ckpt_read_obj_buffer(ctx, ptr, h->uts_release_len);
+	ret = ckpt_read_obj_buffer(ctx, ptr, h->constants.uts_release_len);
 	if (ret < 0)
 		return ret;
 	ptr += ((struct ckpt_hdr *) ptr)->len;
-	ret = ckpt_read_obj_buffer(ctx, ptr, h->uts_version_len);
+	ret = ckpt_read_obj_buffer(ctx, ptr, h->constants.uts_version_len);
 	if (ret < 0)
 		return ret;
 	ptr += ((struct ckpt_hdr *) ptr)->len;
-	ret = ckpt_read_obj_buffer(ctx, ptr, h->uts_machine_len);
+	ret = ckpt_read_obj_buffer(ctx, ptr, h->constants.uts_machine_len);
 	if (ret < 0)
 		return ret;
 
