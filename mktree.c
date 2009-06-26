@@ -151,6 +151,9 @@ struct ckpt_ctx {
 	int pipe_out;
 	int pids_nr;
 
+	int pipe_child[2];	/* for children to report status */
+	int pipe_feed[2];	/* for feeder to provide input */
+
 	struct ckpt_hdr_pids *pids_arr;
 
 	struct task *tasks_arr;
@@ -197,7 +200,7 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child);
 static int ckpt_adjust_pids(struct ckpt_ctx *ctx);
 
 static void ckpt_abort(struct ckpt_ctx *ctx, char *str);
-static int ckpt_do_feeder(struct ckpt_ctx *ctx);
+static int ckpt_do_feeder(void *data);
 static int ckpt_fork_feeder(struct ckpt_ctx *ctx);
 
 static int ckpt_write(int fd, void *buf, int count);
@@ -1257,81 +1260,57 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
  * ckpt_fork_feeder: create the feeder process and set a pipe to deliver
  * the feeder's stdout to our stdin.
  *
- * If restart succeeds, we will never collect the feeder. Rather, we
- * create a grandchild instead, to be collected by init(1).
- *
- * In '--no-pids' mode also setup another pipe through which new tasks
- * will report their old- and new-pid (see ckpt_adjust_pids).
+ * Also setup another pipe through which new tasks will report their
+ * old- and new-pid (see ckpt_adjust_pids). This was originally used
+ * only for '--no-pids', but now also ensures that all restarting
+ * tasks are created by the time coordinator calls restart(2).
  */
 static int ckpt_fork_feeder(struct ckpt_ctx *ctx)
 {
-	int pipe_child[2];	/* for children to report status */
-	int pipe_feed[2];	/* for feeder to provide input */
-	int status, ret;
+	void *stack;
 	pid_t pid;
 
-	if (pipe(&pipe_feed[0])) {
+	if (pipe(ctx->pipe_feed)) {
 		perror("pipe");
 		exit(1);
 	}
 
-	if (pipe(&pipe_child[0]) < 0) {
+	if (pipe(ctx->pipe_child) < 0) {
 		perror("pipe");
 		exit(1);
 	}
 
-	switch ((pid = fork())) {
-	case -1:
-		perror("fork");
-		exit(1);
-	default:
-		/* children pipe (if --no-pids) */
-		close(pipe_child[0]);
-		ctx->pipe_out = pipe_child[1];
-		/* feeder pipe */
-		close(pipe_feed[1]);
-		if (pipe_feed[0] != STDIN_FILENO) {
-			dup2(pipe_feed[0], STDIN_FILENO);
-			close(pipe_feed[0]);
-		}
-		/* collect child */
-		ret = waitpid(pid, &status, 0);
-		if (ret < 0) {
-			perror("waitpid");
-			exit(1);
-		} else if (WIFSIGNALED(status)) {
-			fprintf(stderr, "feeder terminated with signal %d\n",
-				WTERMSIG(status));
-			exit(1);
-		} else if (WEXITSTATUS(status) != 0) {
-			fprintf(stderr, "feeder exited with bad status %d\n",
-				WEXITSTATUS(status));
-			exit(1);
-		}
-		break;
-	case 0:
-		/* fork again so we don't need to be collected later */
-		if ((pid = fork()) < 0) {
-			perror("fork");
-			exit(1);
-		} else if (pid > 0) {
-			exit(0);
-		}
-		/* children pipe (if --no-pids) */
-		close(pipe_child[1]);
-		ctx->pipe_in = pipe_child[0];
-		/* feeder pipe */
-		close(pipe_feed[0]);
-		if (pipe_feed[1] != STDOUT_FILENO) {
-			dup2(pipe_feed[1], STDOUT_FILENO);
-			close(pipe_feed[1]);
-		}
-		/* won't return if all goes well */
-		ret = ckpt_do_feeder(ctx);
-		break;
+	/*
+	 * Use clone() without SIGCHLD so that the when the feeder
+	 * terminates it does not notify the parent (coordinator), as
+	 * this may interfere with the restart.
+	 */
+
+	stack = malloc(PTHREAD_STACK_MIN);
+	if (!stack) {
+		perror("stack malloc");
+		return -1;
+	}
+	stack += PTHREAD_STACK_MIN;
+
+	pid = clone(ckpt_do_feeder, stack,
+		    CLONE_THREAD | CLONE_SIGHAND | CLONE_VM, ctx);
+	if (pid < 0) {
+		perror("feeder thread");
+		return -1;
 	}
 
-	return ret;
+	/* children pipe */
+	close(ctx->pipe_child[0]);
+	ctx->pipe_out = ctx->pipe_child[1];
+	/* feeder pipe */
+	close(ctx->pipe_feed[1]);
+	if (ctx->pipe_feed[0] != STDIN_FILENO) {
+		dup2(ctx->pipe_feed[0], STDIN_FILENO);
+		close(ctx->pipe_feed[0]);
+	}
+
+	return 0;
 }
 
 static void ckpt_abort(struct ckpt_ctx *ctx, char *str)
@@ -1346,9 +1325,20 @@ static void ckpt_abort(struct ckpt_ctx *ctx, char *str)
  * In '--no-pids' mode, transform the pids array (struct ckpt_hdr_pids)
  * on the fly and feed the result to the "init" task of the restart
  */
-static int ckpt_do_feeder(struct ckpt_ctx *ctx)
+static int ckpt_do_feeder(void *data)
 {
+	struct ckpt_ctx *ctx = (struct ckpt_ctx *) data;
 	int ret;
+
+	/* children pipe */
+	close(ctx->pipe_child[1]);
+	ctx->pipe_in = ctx->pipe_child[0];
+	/* feeder pipe */
+	close(ctx->pipe_feed[0]);
+	if (ctx->pipe_feed[1] != STDOUT_FILENO) {
+		dup2(ctx->pipe_feed[1], STDOUT_FILENO);
+		close(ctx->pipe_feed[1]);
+	}
 
 	if (ckpt_adjust_pids(ctx) < 0)
 		ckpt_abort(ctx, "collect pids");
@@ -1375,8 +1365,8 @@ static int ckpt_do_feeder(struct ckpt_ctx *ctx)
 			ckpt_abort(ctx, "write output");
 	}
 
-	/* all is well - we are expected to terminate */
-	exit(0);
+	/* all is well: feeder thread is done */
+	return 0;
 }
 
 /*
