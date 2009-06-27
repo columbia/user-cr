@@ -375,7 +375,7 @@ static void sigchld_handler(int sig)
 	pid_t pid;
 
 	while (1) {
-		pid = waitpid(-1, &status, WNOHANG);
+		pid = waitpid(-1, &status, WNOHANG | __WALL);
 		if (pid == 0) {
 			ckpt_dbg("SIGCHLD: child not ready\n");
 			break;
@@ -541,7 +541,7 @@ static int ckpt_collect_child(struct ckpt_ctx *ctx, pid_t *pidptr)
 	 * reset *pidptr and place the status in global_exit_status.
 	 */
 	if (pid)
-		pid = waitpid(pid, &status, 0);
+		pid = waitpid(pid, &status, __WALL);
 	/*
 	 * moreover, the child may have terminated right before the
 	 * call to waitpid(), so check *pidptr again.
@@ -563,7 +563,7 @@ static int ckpt_pretend_reaper(struct ckpt_ctx *ctx)
 	pid_t pid;
 
 	while (1) {
-		pid = waitpid(-1, &status, 0);
+		pid = waitpid(-1, &status, __WALL);
 		if (pid < 0 && errno == ECHILD)
 			break;
 		if (pid == global_root_pid)
