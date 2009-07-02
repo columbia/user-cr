@@ -38,10 +38,10 @@ static char usage_str[] =
 "  the original tasks tree, and then calling sys_restart by each task.\n"
 "\tOptions:\n"
 "\t -h,--help             print this help message\n"
-"\t -p,--pidns            create a new pid namspace for root task\n"
+"\t -p,--pidns            create a new pid namspace (default with --pids)\n"
 "\t    --pidns-intr=SIG   send SIG to root task on SIGINT (default: SIGKILL)\n"
 "\t -P,--no-pidns         do not create a new pid namspace (default)\n"
-"\t    --pids             restore original pids (implied by --pidns)\n"
+"\t    --pids             restore original pids (default with --pidns)\n"
 "\t -w,--wait             wait for (root) task to termiate (default)\n"
 "\t    --show-status      show exit status of (root) task (implies -w)\n"
 "\t    --copy-status      imitate exit status of (root) task (implies -w)\n"
@@ -63,10 +63,11 @@ static char usage_str[] =
  * For this, the 'ckpt_hdr_pids' array is transformed on-the-fly
  * before it is fed to the kernel.
  *
- * If the user specifies "--pids" for a restart in the currnet namespace
- * then 'mktree' will attempt to create the new tree with the original
- * pids from the time of the checkpoint, if possible. This requires
- * that clone_with_pids() be enabled.
+ * By default, "--pids" implied "--pidns" and vice-versa. The user can
+ * use "--pids --no-pidns" for a restart in the currnet namespace -
+ * 'mktree' will attempt to create the new tree with the original pids
+ * from the time of the checkpoint, if possible. This requires that
+ * clone_with_pids() be enabled.
  *
  * To re-create the tasks tree in user space, 'mktree' reads the
  * header and tree data from the checkpoint image tree. It makes up
@@ -308,6 +309,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			break;
 		case 3:
 			args->pids = 1;
+			args->pidns = 1;  /* implied */
 			break;
 		case 'w':
 			args->wait = 1;
@@ -1255,7 +1257,7 @@ int ckpt_fork_stub(void *data)
 	 * (This also assumes that the hierarchy does not create new
 	 * pid-namespaces during the restart).
 	 */
-	if (task->ctx->args->pids) {
+	if (!task->ctx->args->pids) {
 		if (prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0) < 0) {
 			perror("prctl");
 			return -1;
