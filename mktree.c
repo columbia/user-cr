@@ -1829,11 +1829,12 @@ static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
 	register unsigned long int __r7 asm ("7") = (unsigned long int)(setp); \
 	register unsigned long int __result asm ("2"); \
 	__asm__ __volatile__( \
-		" lghi %%r1,332\n" \
+		" lghi %%r1,%7\n" \
 		" svc 0\n" \
 		: "=d" (__result) \
 		: "0" (__r2), "d" (__r3), \
-		  "d" (__r4), "d" (__r5), "d" (__r6), "d" (__r7) \
+		  "d" (__r4), "d" (__r5), "d" (__r6), "d" (__r7), \
+		  "i" (__NR_clone_with_pids) \
 		: "1", "cc", "memory" \
 	); \
 		__result; \
