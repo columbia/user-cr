@@ -179,10 +179,10 @@ struct target_pid_set {
 
 int global_debug;
 int global_verbose;
-pid_t global_coord_pid;
-pid_t global_root_pid;
+pid_t global_child_pid;
 pid_t global_parent_pid;
-int global_exit_status;
+int global_child_status;
+int global_child_collected;
 int global_send_sigint = -1;
 int global_sent_sigint;
 
@@ -196,7 +196,7 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx);
 static int ckpt_coordinator(struct ckpt_ctx *ctx);
 
 static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task);
-static int ckpt_collect_child(struct ckpt_ctx *ctx, pid_t *pidptr);
+static int ckpt_collect_child(struct ckpt_ctx *ctx);
 static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child);
 static int ckpt_adjust_pids(struct ckpt_ctx *ctx);
 
@@ -361,18 +361,26 @@ static void parse_args(struct args *args, int argc, char *argv[])
 #endif
 }
 
-static void report_exit_status(int status, char *str)
+static void report_exit_status(int status, char *str, int debug)
 {
+	char msg[64];
+
 	if (WIFEXITED(status))
-		ckpt_err("%s exited status %d", str, WEXITSTATUS(status));
+		sprintf(msg, "%s exited status %d", str, WEXITSTATUS(status));
 	else if (WIFSIGNALED(status))
-		ckpt_err("%s killed signal %d", str, WTERMSIG(status));
+		sprintf(msg, "%s killed signal %d", str, WTERMSIG(status));
 	else
-		ckpt_err("%s dies somehow ... raw status %d", str, status);
+		sprintf(msg, "%s dies somehow ... raw status %d", str, status);
+
+	if (debug)
+		ckpt_dbg("%s\n", msg);
+	else
+		ckpt_err("%s\n", msg);
 }
 
 static void sigchld_handler(int sig)
 {
+	int collected = 0;
 	int status;
 	pid_t pid;
 
@@ -383,22 +391,16 @@ static void sigchld_handler(int sig)
 			break;
 		} else if (pid > 0) {
 			/* inform collection coordinator or root-task */
-			global_exit_status = status;
-			if (pid == global_coord_pid)
-				global_coord_pid = 0;
-			else if (pid == global_root_pid)
-				global_root_pid = 0;
-			else {
-				ckpt_err("WERID !! unknown child %d\n", pid);
-				exit(1);
+			if (pid == global_child_pid) {
+				global_child_status = status;
+				global_child_collected = 1;
+				report_exit_status(status, "SIGCHLD: ", 1);
 			}
-			break;
-		}
-		/* pid < 0 */
-		if (errno == EINTR) {
+			ckpt_dbg("SIGCHLD: collected child %d\n", pid);
+			collected = 1;
+		} else if (errno == EINTR) {
 			ckpt_dbg("SIGCHLD: waitpid interrupted\n");
 		} else if (errno == ECHILD) {
-			ckpt_dbg("SIGCHLD: child already collected\n");
 			break;
 		} else {
 			perror("WEIRD !! child collection failed");
@@ -406,28 +408,21 @@ static void sigchld_handler(int sig)
 		}
 	}
 
-	if (pid > 0)
-		report_exit_status(status, "root task");
+	if (!collected)
+		ckpt_dbg("SIGCHLD: already collected\n");
 }
 
 static void sigint_handler(int sig)
 {
-	pid_t pid = 0;
-
-	if (global_coord_pid) {
-		ckpt_dbg("delegating SIGINT to coordinator\n");
-		pid = global_coord_pid;
-	} else if (global_root_pid) {
-		ckpt_dbg("delegating SIGINT to root task\n");
-		pid = global_root_pid;
-	}
+	pid_t pid = global_child_pid;
 
 	ckpt_verbose("SIGINT sent to restarted tasks\n");
 
 	if (pid) {
+		ckpt_dbg("delegating SIGINT to child %d "
+			 "(coordinator or root task)\n", pid);
 		kill(-pid, SIGINT);
 		kill(pid, SIGINT);
-		global_sent_sigint = 1;
 	}
 }
 
@@ -530,26 +525,29 @@ static int ckpt_parse_status(int status, int mimic, int verbose)
 	return 0;
 }
 
-static int ckpt_collect_child(struct ckpt_ctx *ctx, pid_t *pidptr)
+static int ckpt_collect_child(struct ckpt_ctx *ctx)
 {
 	int mimic = ctx->args->copy_status;
 	int verbose = ctx->args->show_status;
 	int status;
 	pid_t pid;
 
-	pid = *pidptr;
 	/*
-	 * if sigchld_handler() collected the child, it must have
-	 * reset *pidptr and place the status in global_exit_status.
+	 * if sigchld_handler() collected the child by now, it set
+	 * @global_child_collected and then left the status inside
+	 * @global_child_status.
 	 */
-	if (pid)
-		pid = waitpid(pid, &status, __WALL);
+	while (!global_child_collected) {
+		pid = waitpid(global_child_pid, &status, __WALL);
+		if (pid == global_child_pid)
+			break;
+	}
 	/*
 	 * moreover, the child may have terminated right before the
-	 * call to waitpid(), so check *pidptr again.
+	 * call to waitpid()
 	 */
-	if (*pidptr == 0) {
-		status = global_exit_status;
+	if (global_child_collected) {
+		status = global_child_status;
 	} else if (pid < 0) {
 		perror("WEIRD: collect child task");
 		exit(1);
@@ -560,7 +558,6 @@ static int ckpt_collect_child(struct ckpt_ctx *ctx, pid_t *pidptr)
 
 static int ckpt_pretend_reaper(struct ckpt_ctx *ctx)
 {
-	int root_status = 0;
 	int status;
 	pid_t pid;
 
@@ -568,11 +565,13 @@ static int ckpt_pretend_reaper(struct ckpt_ctx *ctx)
 		pid = waitpid(-1, &status, __WALL);
 		if (pid < 0 && errno == ECHILD)
 			break;
-		if (pid == global_root_pid)
-			root_status = status;
+		if (!global_child_collected && pid == global_child_pid) {
+			global_child_collected = 1;
+			global_child_status = status;
+		}
 	}
 
-	return ckpt_parse_status(status, 1, 0);
+	return ckpt_parse_status(global_child_status, 1, 0);
 }
 
 static int ckpt_probe_child(pid_t pid, char *str)
@@ -582,7 +581,7 @@ static int ckpt_probe_child(pid_t pid, char *str)
 	/* use waitpid() to probe that a child is still alive */
 	ret = waitpid(pid, &status, WNOHANG);
 	if (ret == pid) {
-		report_exit_status(status, str);
+		report_exit_status(status, str, 0);
 		exit(1);
 	} else if (ret < 0 && errno == ECHILD) {
 		ckpt_err("WEIRD: %s exited without trace (%s)\n",
@@ -625,7 +624,7 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 		perror("clone coordinator");
 		return coord_pid;
 	}
-	global_coord_pid = coord_pid;
+	global_child_pid = coord_pid;
 
 	/* catch SIGCHLD to detect errors in coordinator */
 	signal(SIGCHLD, sigchld_handler);
@@ -641,14 +640,14 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 
 	ctx->args->copy_status = copy;
 	if (ctx->args->wait)
-		return ckpt_collect_child(ctx, &global_coord_pid);
+		return ckpt_collect_child(ctx);
 	else
 		return 0;
 }
 #else
 static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx, int *status)
 {
-	printf("lgoical error: ckpt_coordinator_pidns unexpected\n");
+	printf("logical error: ckpt_coordinator_pidns unexpected\n");
 	exit(1);
 }
 #endif
@@ -661,7 +660,7 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 	root_pid = ckpt_fork_child(ctx, &ctx->tasks_arr[0]);
 	if (root_pid < 0)
 		exit(1);
-	global_root_pid = root_pid;
+	global_child_pid = root_pid;
 
 	/* catch SIGCHLD to detect errors during hierarchy creation */
 	signal(SIGCHLD, sigchld_handler);
@@ -695,7 +694,7 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 		 */
 		ret = ckpt_pretend_reaper(ctx);
 	} else if (ctx->args->wait) {
-		ret = ckpt_collect_child(ctx, &global_root_pid);
+		ret = ckpt_collect_child(ctx);
 	} else {
 		ret = 0;
 	}
