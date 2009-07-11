@@ -156,6 +156,7 @@ struct ckpt_ctx {
 	int pipe_feed[2];	/* for feeder to provide input */
 
 	struct ckpt_hdr_pids *pids_arr;
+	struct ckpt_hdr_pids *copy_arr;
 
 	struct task *tasks_arr;
 	int tasks_nr;
@@ -434,9 +435,6 @@ int main(int argc, char *argv[])
 
 	memset(&ctx, 0, sizeof(ctx));
 
-	if (hash_init(&ctx) < 0)
-		exit(1);
-
 	parse_args(&args, argc, argv);
 
 	ctx.args = &args;
@@ -461,16 +459,17 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+	/* build creator-child-relationship tree */
+	if (hash_init(&ctx) < 0)
+		exit(1);
+	ret = ckpt_build_tree(&ctx);
+	hash_exit(&ctx);
+	if (ret < 0)
+		exit(1);
+
 	ret = ckpt_fork_feeder(&ctx);
 	if (ret < 0)
 		exit(1);
-
-	/* build creator-child-relationship tree */
-	ret = ckpt_build_tree(&ctx);
-	if (ret < 0)
-		exit(1);
-
-	hash_exit(&ctx);
 
 	if (ctx.args->pidns && ctx.tasks_arr[0].pid != 1) {
 		ckpt_dbg("new pidns without init\n");
@@ -1453,9 +1452,8 @@ static int ckpt_do_feeder(void *data)
  */
 static int ckpt_adjust_pids(struct ckpt_ctx *ctx)
 {
-	struct ckpt_hdr_pids *copy_arr;
 	struct pid_swap swap;
-	int n, m, copy_len, ret;
+	int n, m, len, ret;
 
 	/*
 	 * Make a copy of the original array to fix a nifty bug where
@@ -1467,19 +1465,15 @@ static int ckpt_adjust_pids(struct ckpt_ctx *ctx)
 	 *    but correct should be: [][][B][][A][]...
 	 */
 
-	copy_len = sizeof(*copy_arr) * ctx->pids_nr;
-	copy_arr = malloc(copy_len);
-	if (!copy_arr)
-		ckpt_abort(ctx, "malloc copy pids");
-	memcpy(copy_arr, ctx->pids_arr, copy_len);
+	len = sizeof(struct ckpt_hdr_pids) * ctx->pids_nr;
+
+	memcpy(ctx->copy_arr, ctx->pids_arr, len);
 
 	/* read in 'pid_swap' data and adjust ctx->pids_arr */
 	for (n = 0; n < ctx->pids_nr; n++) {
 		ret = read(ctx->pipe_in, &swap, sizeof(swap));
-		if (ret < 0) {
-			free(copy_arr);
+		if (ret < 0)
 			ckpt_abort(ctx, "read pipe");
-		}
 
 		/* swapping isn't needed with '--pids' */
 		if (ctx->args->pids)
@@ -1488,18 +1482,16 @@ static int ckpt_adjust_pids(struct ckpt_ctx *ctx)
 		ckpt_dbg("c/r swap old %d new %d\n", swap.old, swap.new);
 		for (m = 0; m < ctx->pids_nr; m++) {
 			if (ctx->pids_arr[m].vpid == swap.old)
-				copy_arr[m].vpid = swap.new;
+				ctx->copy_arr[m].vpid = swap.new;
 			if (ctx->pids_arr[m].vtgid == swap.old)
-				copy_arr[m].vtgid = swap.new;
+				ctx->copy_arr[m].vtgid = swap.new;
 			if (ctx->pids_arr[m].vppid == swap.old)
-				copy_arr[m].vppid = swap.new;
+				ctx->copy_arr[m].vppid = swap.new;
 		}
 	}
 
-	memcpy(ctx->pids_arr, copy_arr, copy_len);
-
+	memcpy(ctx->pids_arr, ctx->copy_arr, len);
 	close(ctx->pipe_in);
-	free(copy_arr);
 	return 0;
 }
 
@@ -1692,12 +1684,17 @@ static int ckpt_read_tree(struct ckpt_ctx *ctx)
 	/* get a working a copy of header */
 	memcpy(ctx->buf, ctx->tree, BUFSIZE);
 
-	len = sizeof(struct ckpt_hdr_pids) * h->nr_tasks;
-
 	ctx->pids_nr = h->nr_tasks;
+
+	len = sizeof(struct ckpt_hdr_pids) * ctx->pids_nr;
+
 	ctx->pids_arr = malloc(len);
-	if (!ctx->pids_arr)
+	ctx->copy_arr = malloc(len);
+	if (!ctx->pids_arr || !ctx->copy_arr) {
+		if (ctx->pids_arr)
+			free(ctx->pids_arr);
 		return -1;
+	}
 
 	ret = ckpt_read_obj_ptr(ctx, ctx->pids_arr, len, CKPT_HDR_BUFFER);
 	if (ret < 0)
