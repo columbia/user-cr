@@ -276,17 +276,19 @@ static int image_parse_cpu_X86(struct ckpt_hdr *h, int fd, struct args *args)
 
 	if (!args->show_arch_regs && !args->verbose)
 		return 1;
-
-	VERBOSE("\tax=%#lx bx=%#lx cx=%#lx dx=%#lx si=%#lx di=%#lx\n",
+	VERBOSE("\tax=0x%08lx bx=0x%08lx cx=0x%08lx dx=0x%08lx"
+		" si=0x%08lx di=0x%08lx\n",
 		(unsigned long) hh->ax, (unsigned long) hh->bx,
 		(unsigned long) hh->cx, (unsigned long) hh->dx,
 		(unsigned long) hh->si, (unsigned long) hh->di);
-	VERBOSE("\tip=%#lx bp=%#lx sp=%#lx fs=%#lx(%#4hx) gs=%#lx(%#4hx)\n",
+	VERBOSE("\tip=0x%08lx bp=0x%08lx sp=0x%08lx"
+		" fs=0x%08lx(0x%04hx) gs=0x%08lx(0x%04hx)\n",
 		(unsigned long) hh->ip, (unsigned long) hh->bp,
 		(unsigned long) hh->sp, (unsigned long) hh->fs,
 		(unsigned short) hh->fsindex, (unsigned long) hh->gs,
 		(unsigned short) hh->gsindex);
-	VERBOSE("\torig_ax=%#lx flags=%#lx cs=%#4hx ds=%#4hx es=%#4hx ss=%#4hx\n",
+	VERBOSE("\torig_ax=0x%08lx flags=0x%08lx"
+		" cs=0x%04hx ds=0x%04hx es=0x%04hx ss=0x%04hx\n",
 		(unsigned long) hh->orig_ax, (unsigned long) hh->flags,
 		(unsigned short) hh->cs, (unsigned short) hh->ds,
 		(unsigned short) hh->es, (unsigned short) hh->ss);
