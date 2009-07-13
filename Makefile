@@ -1,19 +1,20 @@
 
-KERNELPATH ?= ../linux
+KERNELSRC ?= ../linux
+KERNELBUILD ?= ../linux
 
 # compile with debug ?
 DEBUG = -DCHECKPOINT_DEBUG
 
 # find linux architecure
-KERN_ARCH = $(shell readlink $(KERNELPATH)/include/asm | sed 's/^asm-//')
+KERN_ARCH = $(shell readlink $(KERNELBUILD)/include/asm | sed 's/^asm-//')
 
 # look for includes
-PATHS = -I$(KERNELPATH)/include \
-	-I$(KERNELPATH)/arch/$(KERN_ARCH)/include
+PATHS = -I$(KERNELSRC)/include \
+	-I$(KERNELSRC)/arch/$(KERN_ARCH)/include
 
 # checkpoint_hdr files
-CKPT_HDR = $(KERNELPATH)/include/linux/checkpoint_hdr.h \
-	   $(KERNELPATH)/arch/$(KERN_ARCH)/include/asm/checkpoint_hdr.h
+CKPT_HDR = $(KERNELSRC)/include/linux/checkpoint_hdr.h \
+	   $(KERNELSRC)/arch/$(KERN_ARCH)/include/asm/checkpoint_hdr.h
 
 # extra warnings and fun
 WARNS := -Wall -Wstrict-prototypes -Wno-trigraphs
