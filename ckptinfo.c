@@ -30,12 +30,14 @@ static char usage_str[] =
 "\t -e,--error            show error messages\n"
 "\t -p,--position         show in input stream\n"
 "\t -v,--verbose          verbose output\n"
+"\t    --show-arch-regs   show registers contents\n"
 "";
 
 struct args {
 	int error;
 	int position;
 	int verbose;
+	int show_arch_regs;
 };
 
 int __verbose;
@@ -57,6 +59,14 @@ static int image_parse_file(struct ckpt_hdr *h, int fd, struct args *args);
 static int image_parse_objref(struct ckpt_hdr *h, int fd, struct args *args);
 static int image_parse_error(struct ckpt_hdr *h, int fd, struct args *args);
 
+#ifdef __i386__
+#define __HAVE_image_parse_cpu
+#define image_parse_cpu   image_parse_cpu_X86
+static int image_parse_cpu_X86(struct ckpt_hdr *h, int fd, struct args *args);
+#else
+static int image_parse_cpu(struct ckpt_hdr *h, int fd, struct args *args);
+#endif
+
 char *hdr_to_str(int type);
 char *obj_to_str(int type);
 char *file_to_str(int type);
@@ -75,6 +85,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "error",	no_argument,		NULL, 'e' },
 		{ "position",	no_argument,		NULL, 'p' },
 		{ "verbose",	no_argument,		NULL, 'v' },
+		{ "show-arch-regs",	no_argument,	NULL, 1 },
 		{ NULL,		0,			NULL, 0 }
 	};
 	static char optc[] = "hvep";
@@ -96,6 +107,12 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			break;
 		case 'v':
 			args->verbose = 1;
+			break;
+		case 1:
+#ifndef __HAVE_image_parse_cpu
+			printf("Warning: --show-arch-regs unsupported on architecture\n");
+#endif
+			args->show_arch_regs = 1;
 			break;
 		default:
 			usage(usage_str);
@@ -214,6 +231,9 @@ static int image_parse(int fd, struct args *args)
 		case CKPT_HDR_VMA:
 			ret = image_parse_vma(h, fd, args);
 			break;
+		case CKPT_HDR_CPU:
+			ret = image_parse_cpu(h, fd, args);
+			break;
 		case CKPT_HDR_ERROR:
 			ret = image_parse_error(h, fd, args);
 			break;
@@ -248,6 +268,64 @@ static int image_parse_vma(struct ckpt_hdr *h, int fd, struct args *args)
 		hh->vma_objref, hh->ino_objref);
 	return 1;
 }
+
+#ifdef __i386__
+static int image_parse_cpu_X86(struct ckpt_hdr *h, int fd, struct args *args)
+{
+	struct ckpt_hdr_cpu *hh = (struct ckpt_hdr_cpu *) h;
+
+	if (!args->show_arch_regs && !args->verbose)
+		return 1;
+
+	VERBOSE("\tax=%#lx bx=%#lx cx=%#lx dx=%#lx si=%#lx di=%#lx\n",
+		(unsigned long) hh->ax, (unsigned long) hh->bx,
+		(unsigned long) hh->cx, (unsigned long) hh->dx,
+		(unsigned long) hh->si, (unsigned long) hh->di);
+	VERBOSE("\tip=%#lx bp=%#lx sp=%#lx fs=%#lx(%#4hx) gs=%#lx(%#4hx)\n",
+		(unsigned long) hh->ip, (unsigned long) hh->bp,
+		(unsigned long) hh->sp, (unsigned long) hh->fs,
+		(unsigned short) hh->fsindex, (unsigned long) hh->gs,
+		(unsigned short) hh->gsindex);
+	VERBOSE("\torig_ax=%#lx flags=%#lx cs=%#4hx ds=%#4hx es=%#4hx ss=%#4hx\n",
+		(unsigned long) hh->orig_ax, (unsigned long) hh->flags,
+		(unsigned short) hh->cs, (unsigned short) hh->ds,
+		(unsigned short) hh->es, (unsigned short) hh->ss);
+
+	return 1;
+}
+#endif
+
+#ifdef __s390__
+static int image_parse_cpu_s390(struct ckpt_hdr *h, int fd, struct args *args)
+{
+	struct ckpt_hdr_cpu *hh = (struct ckpt_hdr_cpu *) h;
+	int i;
+
+	if (!args->show_arch_regs && !args->verbose)
+		return 1;
+
+	VERBOSE("\targs=%#lx orig_gpr2=%#lx svcnr=%d ilc=%d\n",
+		(unsigned long) hh->args[0], (unsigned long) hh->orig_gpr2,
+		(int) hh->svcnr, (int) hh->ilc);
+	VERBOSE("\tGPRS:");
+	for (i = 0; i < NUM_GPRS; i++) {
+		if (!(i % 4))
+			VERBOSE("\n\t");
+		VERBOSE("[%d]=%#lx", i, hh->gprs[i]);
+	}
+	VERBOSE("\n");
+
+	return 1;
+}
+#endif
+
+#ifndef __HAVE_image_parse_cpu
+/* fallback version - when no architecture support */
+static int image_parse_cpu(struct ckpt_hdr *h, int fd, struct args *args)
+{
+	return 1;
+}
+#endif
 
 static int image_parse_error(struct ckpt_hdr *h, int fd, struct args *args)
 {
