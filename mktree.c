@@ -140,6 +140,8 @@ struct task {
 	pid_t rpid;		/* [restart without vpids] actual (real) pid */
 
 	struct ckpt_ctx *ctx;	/* points back to the c/r context */
+
+	pid_t real_parent;	/* pid of task's real parent */
 };
 
 #define TASK_ROOT	0x1	/* */
@@ -186,7 +188,6 @@ struct target_pid_set {
 int global_debug;
 int global_verbose;
 pid_t global_child_pid;
-pid_t global_parent_pid;
 int global_child_status;
 int global_child_collected;
 int global_send_sigint = -1;
@@ -1320,37 +1321,37 @@ int ckpt_fork_stub(void *data)
 	struct ckpt_ctx *ctx = task->ctx;
 
 	/*
-	 * When restart without pids, we ensure prpoper cleanup of the
-	 * new hierarchy in case of coordinator death by asking to be
-	 * killed then. When restart succeeds, it will have replaced
-	 * this with the original value.
+	 * In restart into a new pid namespace (--pidns), coordinator
+	 * is the container init, hence if it terminated permatutely
+	 * then the task hierarchy will be cleaned up automagically.
+	 *
+	 * In restart into existing namespace (--no-pidns) we ensure
+	 * proper cleanup of the new hierarchy in case of coordinator
+	 * death by asking to be killed then. When restart succeeds,
+	 * it will have replaced this with the original value.
 	 *
 	 * This works because in the --no-pids case, the hierarchy of
 	 * tasks does not contain zombies (else, there must also be a
-	 * container init, whose pid (==1) is clearly already taken.
+	 * container init, whose pid (==1) is clearly already taken).
 	 *
 	 * Thus, if a the parent of this task dies before this prctl()
-	 * call, it suffices to test getppid() == global_parent_pid.
-	 *
-	 * (This also assumes that the hierarchy does not create new
-	 * pid-namespaces during the restart).
+	 * call, it suffices to test getppid() == task->parent_pid.
 	 */
-	if (!ctx->args->pids) {
+	if (!ctx->args->pidns) {
 		if (prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0) < 0) {
 			perror("prctl");
 			return -1;
 		}
-		if (getppid() != global_parent_pid) {
+		if (getppid() != task->real_parent) {
 			ckpt_err("[%d]: parent is MIA (%d != %d)\n",
-				 _getpid(), getppid(), global_parent_pid);
+				 _getpid(), getppid(), task->real_parent);
 			return -1;
 		}
 	}
 
 	/* if user requested freeze at end - add ourself to cgroup */
 	if (ctx->args->freezer && freezer_register(ctx, _getpid())) {
-		ckpt_err("[%d]: failed add to freezer cgroup\n",
-			 _getpid());
+		ckpt_err("[%d]: failed add to freezer cgroup\n", _getpid());
 		return -1;
 	}
 
@@ -1400,7 +1401,10 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 	}
 #endif
 
-	global_parent_pid = _getpid();
+	if (child->flags & (TASK_SIBLING | TASK_THREAD))
+		child->real_parent = getppid();
+	else
+		child->real_parent = _getpid();
 
 	pid = clone_with_pids(ckpt_fork_stub, stack, flags, &pid_set, child);
 	if (pid < 0) {
