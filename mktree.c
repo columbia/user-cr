@@ -757,8 +757,8 @@ static int ckpt_build_tree(struct ckpt_ctx *ctx)
 #ifdef CHECKPOINT_DEBUG
 	for (i = 0; i < ctx->tasks_nr; i++) {
 		task = &ctx->tasks_arr[i];
-		ckpt_dbg("pid %d ppid %d sid %d creator %d",
-		       task->pid, task->ppid, task->sid,
+		ckpt_dbg("[%d] pid %d ppid %d sid %d creator %d",
+			 i, task->pid, task->ppid, task->sid,
 		       task->creator ? task->creator->pid : 0);
 		if (task->next_sib)
 			ckpt_dbg_cont(" next %d", task->next_sib->pid);
@@ -798,6 +798,7 @@ static int ckpt_setup_task(struct ckpt_ctx *ctx, pid_t pid)
 	task->next_sib = NULL;
 	task->prev_sib = NULL;
 	task->creator = NULL;
+	task->phantom = NULL;
 
 	task->rpid = -1;
 	task->ctx = ctx;
@@ -849,6 +850,7 @@ static int ckpt_init_tree(struct ckpt_ctx *ctx)
 		task->next_sib = NULL;
 		task->prev_sib = NULL;
 		task->creator = NULL;
+		task->phantom = NULL;
 
 		task->rpid = -1;
 		task->ctx = ctx;
@@ -1060,6 +1062,7 @@ static int ckpt_placeholder_task(struct ckpt_ctx *ctx, struct task *task)
 	holder->next_sib = NULL;
 	holder->prev_sib = NULL;
 	holder->creator = NULL;
+	holder->phantom = NULL;
 
 	holder->rpid = -1;
 	holder->ctx = ctx;
