@@ -21,6 +21,8 @@
 #include <pthread.h>
 #include <signal.h>
 #include <time.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -46,6 +48,7 @@ static char usage_str[] =
 "\t    --show-status      show exit status of (root) task (implies -w)\n"
 "\t    --copy-status      imitate exit status of (root) task (implies -w)\n"
 "\t -W,--no-wait          do not wait for (root) task to terminate\n"
+"\t -F,--freezer=CGROUP   freeze tasks in freezer group CGROUP on success\n"
 "\t -v,--verbose          verbose output\n"
 "\t -d,--debug            debugging output\n"
 "";
@@ -170,6 +173,8 @@ struct ckpt_ctx {
 	char tree[BUFSIZE];
 	char buf[BUFSIZE];
 	struct args *args;
+
+	char *freezer;
 };
 
 /* this really belongs to some kernel header ! */
@@ -250,6 +255,7 @@ struct args {
 	int wait;
 	int show_status;
 	int copy_status;
+	char *freezer;
 };
 
 static void usage(char *str)
@@ -270,11 +276,12 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "show-status",	no_argument,	NULL, 1 },
 		{ "copy-status",	no_argument,	NULL, 2 },
 		{ "no-wait",	no_argument,		NULL, 'W' },
+		{ "freezer",	required_argument,	NULL, 'F' },
 		{ "verbose",	no_argument,		NULL, 'v' },
 		{ "debug",	no_argument,		NULL, 'd' },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hdvpPwW";
+	static char optc[] = "hdvpPwWF:";
 
 	int sig;
 
@@ -328,6 +335,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			break;
 		case 'd':
 			global_debug = 1;
+			break;
+		case 'F':
+			args->freezer = optarg;
 			break;
 		default:
 			usage(usage_str);
@@ -427,6 +437,65 @@ static void sigint_handler(int sig)
 	}
 }
 
+static int freezer_prepare(struct ckpt_ctx *ctx)
+{
+	char *freezer;
+	int fd, ret;
+
+#define FREEZER_THAWED  "THAWED"
+
+	freezer = malloc(strlen(ctx->args->freezer) + 32);
+	if (!freezer) {
+		perror("malloc freezer buf");
+		return -1;
+	}
+
+	sprintf(freezer, "%s/freezer.state", ctx->args->freezer);
+
+	fd = open(freezer, O_WRONLY, 0);
+	if (fd < 0) {
+		perror("freezer path");
+		free(freezer);
+		exit(1);
+	}
+	ret = write(fd, FREEZER_THAWED, sizeof(FREEZER_THAWED)); 
+	if (ret != sizeof(FREEZER_THAWED)) {
+		perror("thawing freezer");
+		free(freezer);
+		exit(1);
+	}
+
+	sprintf(freezer, "%s/tasks", ctx->args->freezer);
+	ctx->freezer = freezer;
+	close(fd);
+	return 0;
+}
+
+static int freezer_register(struct ckpt_ctx *ctx, pid_t pid)
+{
+	char pidstr[16];
+	int fd, n, ret;
+
+
+	fd = open(ctx->freezer, O_WRONLY, 0);
+	if (fd < 0) {
+		perror("freezer path");
+		return -1;
+	}
+
+	n = sprintf(pidstr, "%d", pid);
+	ret = write(fd, pidstr, n);
+	if (ret != n) {
+		perror("adding pid %d to freezer");
+		ret = -1;
+	} else {
+		ret = 0;
+	}
+
+	close(fd);
+	return ret;
+}
+
 int main(int argc, char *argv[])
 {
 	struct ckpt_ctx ctx;
@@ -438,6 +507,9 @@ int main(int argc, char *argv[])
 	parse_args(&args, argc, argv);
 
 	ctx.args = &args;
+
+	if (args.freezer && freezer_prepare(&ctx) < 0)
+		exit(1);
 
 	setpgrp();
 
@@ -653,6 +725,7 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx, int *status)
 
 static int ckpt_coordinator(struct ckpt_ctx *ctx)
 {
+	unsigned long flags = 0;
 	pid_t root_pid;
 	int ret;
 
@@ -673,7 +746,10 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 	if (ckpt_probe_child(root_pid, "root task") < 0)
 		exit(1);
 
-	ret = restart(root_pid, STDIN_FILENO, 0);
+	if (ctx->args->freezer)
+		flags |= RESTART_FROZEN;
+
+	ret = restart(root_pid, STDIN_FILENO, flags);
 
 	if (ret < 0) {
 		perror("restart failed");
@@ -1241,6 +1317,7 @@ static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 int ckpt_fork_stub(void *data)
 {
 	struct task *task = (struct task *) data;
+	struct ckpt_ctx *ctx = task->ctx;
 
 	/*
 	 * When restart without pids, we ensure prpoper cleanup of the
@@ -1258,7 +1335,7 @@ int ckpt_fork_stub(void *data)
 	 * (This also assumes that the hierarchy does not create new
 	 * pid-namespaces during the restart).
 	 */
-	if (!task->ctx->args->pids) {
+	if (!ctx->args->pids) {
 		if (prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0) < 0) {
 			perror("prctl");
 			return -1;
@@ -1270,13 +1347,20 @@ int ckpt_fork_stub(void *data)
 		}
 	}
 
+	/* if user requested freeze at end - add ourself to cgroup */
+	if (ctx->args->freezer && freezer_register(ctx, _getpid())) {
+		ckpt_err("[%d]: failed add to freezer cgroup\n",
+			 _getpid());
+		return -1;
+	}
+
 	/* root has some extra work */
 	if (task->flags & TASK_ROOT) {
-		task->ctx->init_pid = _getpid();
+		ctx->init_pid = _getpid();
 		ckpt_dbg("root task pid %d\n", _getpid());
 	}
 
-	return ckpt_make_tree(task->ctx, task);
+	return ckpt_make_tree(ctx, task);
 }
 
 static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
