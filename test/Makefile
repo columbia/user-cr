@@ -6,7 +6,8 @@ WARNS := -Wall -Wstrict-prototypes -Wno-trigraphs
 CFLAGS += -g $(WARNS)
 
 TESTS=	onetask multitask bigmem pipes pipes2 fifo shmem \
-	ipcshm ipcmsq ipcsem ipcshm_multi zombie sigpending
+	ipcshm ipcmsq ipcsem ipcshm_multi zombie sigpending \
+	itimer
 
 LDLIBS = -lm
 
