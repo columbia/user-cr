@@ -13,7 +13,7 @@ int sigcount;
 
 void handler(int sig)
 {
-	fprintf(file, "received signal %d\n", sig);
+	fprintf(file, "[%d] received signal %d\n", sigcount, sig);
 	fflush(file);
 	if (sigcount++ == 20) {
 		fprintf(file, "world, hello\n");
