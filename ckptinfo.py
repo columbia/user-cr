@@ -42,7 +42,7 @@ char *%s_to_str(int type)
 	switch (type) {
 """ % type
     for key in list:
-        print "	case CKPT_%s: return \"%s\";" % (key, key)
+        print "#ifdef CKPT_%s\n\tcase CKPT_%s: return \"%s\";\n#endif" % (key, key, key)
 
     print """
 	}
