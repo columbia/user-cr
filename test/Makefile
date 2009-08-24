@@ -7,7 +7,7 @@ CFLAGS += -g $(WARNS)
 
 TESTS=	onetask multitask bigmem pipes pipes2 fifo shmem \
 	ipcshm ipcmsq ipcsem ipcshm_multi zombie sigpending \
-	itimer pty
+	itimer pty pgrp
 
 LDLIBS = -lm
 
