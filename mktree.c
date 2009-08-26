@@ -160,8 +160,8 @@ struct ckpt_ctx {
 	int pipe_child[2];	/* for children to report status */
 	int pipe_feed[2];	/* for feeder to provide input */
 
-	struct ckpt_hdr_pids *pids_arr;
-	struct ckpt_hdr_pids *copy_arr;
+	struct ckpt_pids *pids_arr;
+	struct ckpt_pids *copy_arr;
 
 	struct task *tasks_arr;
 	int tasks_nr;
@@ -1556,7 +1556,7 @@ static int ckpt_adjust_pids(struct ckpt_ctx *ctx)
 	 *    but correct should be: [][][B][][A][]...
 	 */
 
-	len = sizeof(struct ckpt_hdr_pids) * ctx->pids_nr;
+	len = sizeof(struct ckpt_pids) * ctx->pids_nr;
 
 	memcpy(ctx->copy_arr, ctx->pids_arr, len);
 
@@ -1777,7 +1777,7 @@ static int ckpt_read_tree(struct ckpt_ctx *ctx)
 
 	ctx->pids_nr = h->nr_tasks;
 
-	len = sizeof(struct ckpt_hdr_pids) * ctx->pids_nr;
+	len = sizeof(struct ckpt_pids) * ctx->pids_nr;
 
 	ctx->pids_arr = malloc(len);
 	ctx->copy_arr = malloc(len);
@@ -1835,7 +1835,7 @@ static int ckpt_write_tree(struct ckpt_ctx *ctx)
 	if (ckpt_write_obj(ctx, (struct ckpt_hdr *) h) < 0)
 		ckpt_abort(ctx, "write tree");
 
-	len = sizeof(struct ckpt_hdr_pids) * ctx->pids_nr;
+	len = sizeof(struct ckpt_pids) * ctx->pids_nr;
 	if (ckpt_write_obj_ptr(ctx, ctx->pids_arr, len, CKPT_HDR_BUFFER) < 0)
 		ckpt_abort(ctx, "write pids");
 
