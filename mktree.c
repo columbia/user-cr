@@ -1367,18 +1367,19 @@ int ckpt_fork_stub(void *data)
 static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 {
 	struct target_pid_set pid_set;
-	void *stack = NULL;
+	char *stack_region;
+	char *stack_start;
 	unsigned long flags = SIGCHLD;
 	pid_t pid = 0;
 
 	ckpt_dbg("forking child vpid %d flags %#x\n", child->pid, child->flags);
 
-	stack = malloc(PTHREAD_STACK_MIN);
-	if (!stack) {
+	stack_region = malloc(PTHREAD_STACK_MIN);
+	if (!stack_region) {
 		perror("stack malloc");
 		return -1;
 	}
-	stack += PTHREAD_STACK_MIN;
+	stack_start = stack_region + PTHREAD_STACK_MIN - 1;
 
 	pid_set.target_pids = &pid;
 	pid_set.num_pids = 1;
@@ -1406,15 +1407,15 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 	else
 		child->real_parent = _getpid();
 
-	pid = clone_with_pids(ckpt_fork_stub, stack, flags, &pid_set, child);
+	pid = clone_with_pids(ckpt_fork_stub, stack_start, flags, &pid_set, child);
 	if (pid < 0) {
 		perror("clone");
-		free(stack - PTHREAD_STACK_MIN);
+		free(stack_region);
 		return -1;
 	}
 
 	if (!(child->flags & TASK_THREAD))
-		free(stack - PTHREAD_STACK_MIN);
+		free(stack_region);
 
 	ckpt_dbg("forked child vpid %d (asked %d)\n", pid, child->pid);
 	return pid;
