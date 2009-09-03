@@ -32,7 +32,7 @@ CFLAGS += -g $(WARNS) $(CKPT_INCLUDE) $(DEBUG)
 # install dir
 INSTALL_DIR = /bin
 
-PROGS =	self ckpt rstr mktree ckptinfo
+PROGS =	self_checkpoint self_restart checkpoint restart ckptinfo
 
 # other cleanup
 OTHER = ckptinfo_types.c
@@ -57,8 +57,8 @@ ckptinfo_types.c: $(CKPT_HEADERS) ckptinfo.py
 %.o:	%.c
 
 install:
-	@echo /usr/bin/install -m 755 mktree ckpt rstr ckptinfo $(INSTALL_DIR)
-	@/usr/bin/install -m 755 mktree ckpt rstr ckptinfo $(INSTALL_DIR)
+	@echo /usr/bin/install -m 755 checkpoint restart self_restart ckptinfo $(INSTALL_DIR)
+	@/usr/bin/install -m 755 checkpoint restart self_restart ckptinfo $(INSTALL_DIR)
 
 clean:
 	@rm -f $(PROGS) $(OTHER) *~ *.o
