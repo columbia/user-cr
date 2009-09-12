@@ -41,8 +41,8 @@ static char usage_str[] =
 "\tOptions:\n"
 "\t -h,--help             print this help message\n"
 "\t -p,--pidns            create a new pid namspace (default with --pids)\n"
-"\t    --pidns-intr=SIG   send SIG to root task on SIGINT (default: SIGKILL)\n"
 "\t -P,--no-pidns         do not create a new pid namspace (default)\n"
+"\t    --pidns-intr=SIG   send SIG to root task on SIGINT (default: SIGKILL)\n"
 "\t    --pids             restore original pids (default with --pidns)\n"
 "\t -r,--root=ROOT        restart under the directory ROOT instead of current\n"
 "\t -w,--wait             wait for (root) task to termiate (default)\n"
@@ -259,6 +259,7 @@ struct pid_swap {
 struct args {
 	int pids;
 	int pidns;
+	int no_pidns;
 	char *root;
 	int wait;
 	int show_status;
@@ -314,7 +315,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			args->pidns = 1;
 			break;
 		case 'P':
-			args->pidns = 0;
+			args->no_pidns = 1;
 			break;
 		case 4:
 			sig = atoi(optarg);
@@ -355,6 +356,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			usage(usage_str);
 		}
 	}
+
+	if (args->no_pidns)
+		args->pidns = 0;
 
 #ifndef CLONE_NEWPID
 	if (args->pidns) {
