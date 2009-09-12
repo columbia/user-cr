@@ -44,6 +44,7 @@ static char usage_str[] =
 "\t    --pidns-intr=SIG   send SIG to root task on SIGINT (default: SIGKILL)\n"
 "\t -P,--no-pidns         do not create a new pid namspace (default)\n"
 "\t    --pids             restore original pids (default with --pidns)\n"
+"\t -r,--root=ROOT        restart under the directory ROOT instead of current\n"
 "\t -w,--wait             wait for (root) task to termiate (default)\n"
 "\t    --show-status      show exit status of (root) task (implies -w)\n"
 "\t    --copy-status      imitate exit status of (root) task (implies -w)\n"
@@ -258,6 +259,7 @@ struct pid_swap {
 struct args {
 	int pids;
 	int pidns;
+	char *root;
 	int wait;
 	int show_status;
 	int copy_status;
@@ -278,6 +280,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "pidns-signal",	required_argument,	NULL, '4' },
 		{ "no-pidns",	no_argument,		NULL, 'P' },
 		{ "pids",	no_argument,		NULL, 3 },
+		{ "root",	required_argument,		NULL, 'r' },
 		{ "wait",	no_argument,		NULL, 'w' },
 		{ "show-status",	no_argument,	NULL, 1 },
 		{ "copy-status",	no_argument,	NULL, 2 },
@@ -287,7 +290,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "debug",	no_argument,		NULL, 'd' },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hdvpPwWF:";
+	static char optc[] = "hdvpPwWF:r:";
 
 	int sig;
 
@@ -324,6 +327,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		case 3:
 			args->pids = 1;
 			args->pidns = 1;  /* implied */
+			break;
+		case 'r':
+			args->root = optarg;
 			break;
 		case 'w':
 			args->wait = 1;
@@ -518,6 +524,11 @@ int main(int argc, char *argv[])
 		exit(1);
 
 	setpgrp();
+
+	if (args.root && chroot(args.root) < 0) {
+		perror("chroot");
+		exit(1);
+	}
 
 	ret = ckpt_read_header(&ctx);
 	if (ret < 0) {
