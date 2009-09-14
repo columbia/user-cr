@@ -44,6 +44,7 @@ static char usage_str[] =
 "\t -P,--no-pidns         do not create a new pid namspace (default)\n"
 "\t    --pidns-intr=SIG   send SIG to root task on SIGINT (default: SIGKILL)\n"
 "\t    --pids             restore original pids (default with --pidns)\n"
+"\t -i,--inspect          inspect image on-the-fly for error records\n"
 "\t -r,--root=ROOT        restart under the directory ROOT instead of current\n"
 "\t -w,--wait             wait for (root) task to termiate (default)\n"
 "\t    --show-status      show exit status of (root) task (implies -w)\n"
@@ -224,6 +225,7 @@ static int ckpt_write_header(struct ckpt_ctx *ctx);
 static int ckpt_write_header_arch(struct ckpt_ctx *ctx);
 static int ckpt_write_tree(struct ckpt_ctx *ctx);
 
+static int _ckpt_read(int fd, void *buf, int count);
 static int ckpt_read(int fd, void *buf, int count);
 static int ckpt_read_obj(struct ckpt_ctx *ctx,
 			 struct ckpt_hdr *h, void *buf, int n);
@@ -260,6 +262,7 @@ struct args {
 	int pids;
 	int pidns;
 	int no_pidns;
+	int inspect;
 	char *root;
 	int wait;
 	int show_status;
@@ -281,6 +284,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "pidns-signal",	required_argument,	NULL, '4' },
 		{ "no-pidns",	no_argument,		NULL, 'P' },
 		{ "pids",	no_argument,		NULL, 3 },
+		{ "inspect",	no_argument,		NULL, 'i' },
 		{ "root",	required_argument,		NULL, 'r' },
 		{ "wait",	no_argument,		NULL, 'w' },
 		{ "show-status",	no_argument,	NULL, 1 },
@@ -291,7 +295,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "debug",	no_argument,		NULL, 'd' },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hdvpPwWF:r:";
+	static char optc[] = "hdivpPwWF:r:";
 
 	int sig;
 
@@ -310,6 +314,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			usage(usage_str);
 		case 'v':
 			global_verbose = 1;
+			break;
+		case 'i':
+			args->inspect = 1;
 			break;
 		case 'p':
 			args->pidns = 1;
@@ -1584,6 +1591,75 @@ static void ckpt_abort(struct ckpt_ctx *ctx, char *str)
 	exit(1);
 }
 
+/* read/write image data as is, blindly */
+static void ckpt_read_write_blind(struct ckpt_ctx *ctx)
+{
+	int ret;
+
+	while (1) {
+		ret = read(STDIN_FILENO, ctx->buf, BUFSIZE);
+		ckpt_dbg("c/r read input %d\n", ret);
+		if (ret == 0)
+			break;
+		if (ret < 0)
+			ckpt_abort(ctx, "read input");
+		ret = ckpt_write(STDOUT_FILENO, ctx->buf, ret);
+		if (ret < 0)
+			ckpt_abort(ctx, "write output");
+	}
+}
+
+/* read/write image data while inspecting it */
+static void ckpt_read_write_inspect(struct ckpt_ctx *ctx)
+{
+	struct ckpt_hdr h;
+	int len, ret;
+
+	while (1) {
+		ret = _ckpt_read(STDIN_FILENO, &h, sizeof(h));
+ckpt_dbg("ret %d len %d type %d\n", ret, h.len, h.type);
+		if (ret == 0)
+			break;
+		if (ret < 0)
+			ckpt_abort(ctx, "read input");
+		if (h.len < sizeof(h)) {
+			errno = EINVAL;
+			ckpt_abort(ctx, "invalid record");
+		}
+
+		ret = ckpt_write(STDOUT_FILENO, &h, sizeof(h));
+		if (ret < 0)
+			ckpt_abort(ctx, "write output");
+
+		h.len -= sizeof(h);
+		if (h.type == CKPT_HDR_ERROR) {
+			len = (h.len > BUFSIZE ? BUFSIZE : h.len);
+			ret = read(STDIN_FILENO, ctx->buf, len);
+			if (ret < 0)
+				ckpt_abort(ctx, "error record");
+			errno = EIO;
+			ctx->buf[len - 1] = '\0';
+			ckpt_abort(ctx, &ctx->buf[1]);
+		}
+		ckpt_dbg("c/r read input %d\n", h.len);
+
+		while (h.len) {
+			len = (h.len > BUFSIZE ? BUFSIZE : h.len);
+			ret = read(STDIN_FILENO, ctx->buf, len);
+			if (ret == 0)
+				ckpt_abort(ctx, "short record");
+			if (ret < 0)
+				ckpt_abort(ctx, "read input");
+
+			h.len -= ret;
+			ret = ckpt_write(STDOUT_FILENO, ctx->buf, ret);
+ckpt_dbg("write len %d (%d)\n", len, ret);
+			if (ret < 0)
+				ckpt_abort(ctx, "write output");
+		}
+	}
+}
+
 /*
  * feeder process: delegates checkpoint image stream to the kernel.
  * In '--no-pids' mode, transform the pids array (struct ckpt_pids)
@@ -1592,7 +1668,6 @@ static void ckpt_abort(struct ckpt_ctx *ctx, char *str)
 static int ckpt_do_feeder(void *data)
 {
 	struct ckpt_ctx *ctx = (struct ckpt_ctx *) data;
-	int ret;
 
 	/* children pipe */
 	close(ctx->pipe_child[1]);
@@ -1617,18 +1692,11 @@ static int ckpt_do_feeder(void *data)
 		ckpt_abort(ctx, "write c/r tree");
 
 	/* read rest -> write rest */
-	while (1) {
-		ret = read(STDIN_FILENO, ctx->buf, BUFSIZE);
-		ckpt_dbg("c/r read input %d\n", ret);
-		if (ret == 0)
-			break;
-		if (ret < 0)
-			ckpt_abort(ctx, "read input");
-		ret = ckpt_write(STDOUT_FILENO, ctx->buf, ret);
-		if (ret < 0)
-			ckpt_abort(ctx, "write output");
-	}
-
+	if (ctx->args->inspect)
+		ckpt_read_write_inspect(ctx);
+	else
+		ckpt_read_write_blind(ctx);
+		
 	/* all is well: feeder thread is done */
 	return 0;
 }
@@ -1733,12 +1801,13 @@ int ckpt_write_obj_ptr(struct ckpt_ctx *ctx, void *buf, int n, int type)
 
 /*
  * low-level read
- *   ckpt_read - read 'count' bytes to 'buf'
+ *   _ckpt_read - read 'count' bytes to 'buf', or EOF
+ *   ckpt_read - read 'count' bytes to 'buf' (EOF disallowed)
  *   ckpt_read_obj - read up to 'n' bytes of object into 'buf'
  *   ckpt_read_obj_type - read up to 'n' bytes of object type 'type' into 'buf'
  *   ckpt_read_obj_ptr - like ckpt_read_obj_type, but discards header
  */
-static int ckpt_read(int fd, void *buf, int count)
+static int _ckpt_read(int fd, void *buf, int count)
 {
 	ssize_t nread;
 	int nleft;
@@ -1747,11 +1816,25 @@ static int ckpt_read(int fd, void *buf, int count)
 		nread = read(fd, buf, nleft);
 		if (nread < 0 && errno == EAGAIN)
 			continue;
+		if (nread == 0 && nleft == count)
+			return 0;
 		if (nread <= 0)
 			return -1;
 		buf += nread;
 	}
-	return 0;
+	return count;
+}
+
+static int ckpt_read(int fd, void *buf, int count)
+{
+	int ret;
+
+	ret = _ckpt_read(fd, buf, count);
+	if (ret == 0) {
+		errno = EINVAL;
+		ret = -1;
+	}
+	return (ret < 0 ? ret : 0);
 }
 
 static int ckpt_read_obj(struct ckpt_ctx *ctx,
@@ -1762,7 +1845,7 @@ static int ckpt_read_obj(struct ckpt_ctx *ctx,
 	ret = ckpt_read(STDIN_FILENO, h, sizeof(*h));
 	if (ret < 0)
 		return ret;
-	if (h->len > n) {
+	if (h->len < sizeof(*h) || h->len > n) {
 		errno = EINVAL;
 		return -1;
 	}
