@@ -100,10 +100,12 @@ int main(int argc, char *argv[])
 
 	ret = syscall(__NR_checkpoint, pid, STDOUT_FILENO, flags);
 
-	if (ret < 0)
+	if (ret < 0) {
 		perror("checkpoint");
-	else if (args.verbose)
+		fprintf(stderr, "(you may use 'ckptinfo -e' for more info)\n"); 
+	} else if (args.verbose) {
 		fprintf(stderr, "checkpoint id %d\n", ret);
+	}
 
 	return (ret > 0 ? 0 : 1);
 }

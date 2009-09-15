@@ -364,7 +364,7 @@ static int image_parse_error(struct ckpt_hdr *h, int fd, struct args *args)
 	}
 
 	str = (char *) (p + 1);
-	printf("CKPT_HDR_ERROR: %s", &str[1]);
+	printf("CKPT_HDR_ERROR: %s\n", &str[1]);
 
 	free(p);
 	return (args->error ? 0 : 1);
