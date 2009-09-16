@@ -8,6 +8,7 @@
  *  distribution for more details.
  */
 
+#include <asm/unistd.h>
 #include "powerpc_asm.h"
 
 /* int [r3] clone_with_pids(int (*fn)(void *arg) [r3],
