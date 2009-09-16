@@ -44,7 +44,7 @@ all: $(PROGS)
 
 ckptinfo: ckptinfo_types.o
 
-mktree:	CFLAGS += -D__REENTRANT -pthread
+restart: CFLAGS += -D__REENTRANT -pthread
 
 ckptinfo_types.o: ckptinfo_types.c
 	@echo $(CC) -c $(CFLAGS) $<
