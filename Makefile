@@ -46,12 +46,18 @@ all: $(PROGS)
 	echo $(SUBARCH)
 	@make -C test
 
-# restart dependencies
+# restart needs to be thread-safe
 restart: CFLAGS += -D__REENTRANT -pthread
 
+# clone_with_pids() is architecture specific
 ifneq ($(SUBARCH),)
 restart: clone_$(SUBARCH).o
 restart: CFLAGS += -DARCH_HAS_CLONE_WITH_PID
+endif
+
+# on powerpc, need also assembly file
+ifeq ($(SUBARCH),ppc)
+restart: clone_$(SUBARCH)_.o
 endif
 
 # ckptinfo dependencies
