@@ -34,6 +34,26 @@
 #include <linux/checkpoint.h>
 #include <linux/checkpoint_hdr.h>
 
+
+/* this really belongs to some kernel header ! */
+struct pid_set {
+	int num_pids;
+	pid_t *pids;
+};
+
+/* (until it's supported by libc) from clone_ARCH.c */
+#if defined(__NR_clone_with_pids) && defined(ARCH_HAS_CLONE_WITH_PID)
+extern int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
+			   struct pid_set *target_pids, void *arg);
+#else
+static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
+			   struct pid_set *target_pids, void *arg)
+{
+	return clone(fn, child_stack, flags, arg);
+}
+#endif
+
+
 static char usage_str[] =
 "usage: restart [opts]\n"
 "  restart restores from a checkpoint image by first creating in userspace\n"
@@ -185,12 +205,6 @@ struct ckpt_ctx {
 	char *freezer;
 };
 
-/* this really belongs to some kernel header ! */
-struct target_pid_set {
-	int num_pids;
-	pid_t *target_pids;
-};
-
 int global_debug;
 int global_verbose;
 pid_t global_child_pid;
@@ -234,9 +248,6 @@ static int ckpt_read_obj_type(struct ckpt_ctx *ctx, void *b, int n, int type);
 static int ckpt_read_header(struct ckpt_ctx *ctx);
 static int ckpt_read_header_arch(struct ckpt_ctx *ctx);
 static int ckpt_read_tree(struct ckpt_ctx *ctx);
-
-static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
-			   struct target_pid_set *target_pids, void *arg);
 
 static int hash_init(struct ckpt_ctx *ctx);
 static void hash_exit(struct ckpt_ctx *ctx);
@@ -1472,7 +1483,7 @@ int ckpt_fork_stub(void *data)
 
 static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 {
-	struct target_pid_set pid_set;
+	struct pid_set pid_set;
 	char *stack_region;
 	char *stack_start;
 	unsigned long flags = SIGCHLD;
@@ -1487,7 +1498,7 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 	}
 	stack_start = stack_region + PTHREAD_STACK_MIN - 1;
 
-	pid_set.target_pids = &pid;
+	pid_set.pids = &pid;
 	pid_set.num_pids = 1;
 
 	if (child->flags & TASK_THREAD) {
@@ -2029,118 +2040,6 @@ static int ckpt_write_tree(struct ckpt_ctx *ctx)
 
 	return 0;
 }
-
-/*
- * libc doesn't support clone_with_pid() yet...
- * below is arch-dependent code to use the syscall
- */
-#if defined(__i386__) && defined(__NR_clone_with_pids)
-
-/*
- * x86_32
- * (see: http://lkml.indiana.edu/hypermail/linux/kernel/9604.3/0204.html)
- */
-static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
-			   struct target_pid_set *target_pids, void *arg)
-{
-	long retval;
-	void **newstack;
-
-	/*
-	 * Set up the stack for child:
-	 *  - the (void *) arg will be the argument for the child function
-	 *  - the fn pointer will be loaded into ebx after the clone
-	 */
-	newstack = (void **) child_stack;
-	*--newstack = arg;
-	*--newstack = fn;
-
-	__asm__  __volatile__(
-		 "movl %0, %%ebx\n\t"		/* flags -> 1st (ebx) */
-		 "movl %1, %%ecx\n\t"		/* newstack -> 2nd (ecx)*/
-		 "xorl %%edi, %%edi\n\t"	/* 0 -> 3rd (edi) */
-		 "xorl %%edx, %%edx\n\t"	/* 0 -> 4th (edx) */
-		 "pushl %%ebp\n\t"		/* save value of ebp */
-		 "movl %2, %%ebp\n\t"		/* flags -> 6th (ebp) */
-		:
-		:"b" (flags),
-		 "c" (newstack),
-		 "r" (target_pids)
-		);
-
-	__asm__ __volatile__(
-		 "int $0x80\n\t"	/* Linux/i386 system call */
-		 "testl %0,%0\n\t"	/* check return value */
-		 "jne 1f\n\t"		/* jump if parent */
-		 "popl %%ebx\n\t"	/* get subthread function */
-		 "call *%%ebx\n\t"	/* start subthread function */
-		 "movl %2,%0\n\t"
-		 "int $0x80\n"		/* exit system call: exit subthread */
-		 "1:\n\t"
-		 "popl %%ebp\t"		/* restore parent's ebp */
-		:"=a" (retval)
-		:"0" (__NR_clone_with_pids), "i" (__NR_exit)
-		:"ebx", "ecx"
-		);
-
-	if (retval < 0) {
-		errno = -retval;
-		retval = -1;
-	}
-	return retval;
-}
-
-#elif defined(__s390__) && defined(__NR_clone_with_pids)
-
-/*
- * s390
- */
-#define do_clone_with_pids(stack, flags, ptid, ctid, setp) ({ \
-	register unsigned long int __r2 asm ("2") = (unsigned long int)(stack);\
-	register unsigned long int __r3 asm ("3") = (unsigned long int)(flags);\
-	register unsigned long int __r4 asm ("4") = (unsigned long int)(ptid); \
-	register unsigned long int __r5 asm ("5") = (unsigned long int)(ctid); \
-	register unsigned long int __r6 asm ("6") = (unsigned long int)(NULL); \
-	register unsigned long int __r7 asm ("7") = (unsigned long int)(setp); \
-	register unsigned long int __result asm ("2"); \
-	__asm__ __volatile__( \
-		" lghi %%r1,%7\n" \
-		" svc 0\n" \
-		: "=d" (__result) \
-		: "0" (__r2), "d" (__r3), \
-		  "d" (__r4), "d" (__r5), "d" (__r6), "d" (__r7), \
-		  "i" (__NR_clone_with_pids) \
-		: "1", "cc", "memory" \
-	); \
-		__result; \
-	})
-
-int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
-			struct target_pid_set *target_pids, void *arg)
-{
-	long retval;
-	retval = do_clone_with_pids(child_stack, flags, NULL, NULL,
-				    target_pids);
-
-	if (retval < 0) {
-		errno = -retval;
-		return -1;
-	} else if (retval == 0) {
-		return fn(arg);
-	} else
-		return retval;
-}
-
-#else  /* !defined(__NR_clone_with_pids) */
-
-/* on other architectures fallback to regular clone(2) */
-static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
-			   struct target_pid_set *target_pids, void *arg)
-{
-	return clone(fn, child_stack, flags, arg);
-}
-
-#endif
 
 /*
  * a simple hash implementation

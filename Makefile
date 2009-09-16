@@ -20,6 +20,9 @@ CKPT_HEADERS = $(KERNELSRC)/include/linux/checkpoint_hdr.h \
 	       $(KERNELSRC)/arch/$(KERN_ARCH)/include/asm/checkpoint_hdr.h
 endif
 
+# detect architecture (for clone_with_pids)
+SUBARCH = $(patsubst i%86,x86_32,$(shell uname -m))
+
 # compile with debug ?
 DEBUG = -DCHECKPOINT_DEBUG
 
@@ -40,21 +43,23 @@ OTHER = ckptinfo_types.c
 LDLIBS = -lm
 
 all: $(PROGS)
+	echo $(SUBARCH)
 	@make -C test
 
-ckptinfo: ckptinfo_types.o
-
+# restart dependencies
 restart: CFLAGS += -D__REENTRANT -pthread
 
-ckptinfo_types.o: ckptinfo_types.c
-	@echo $(CC) -c $(CFLAGS) $<
-	@$(CC) -c $(CFLAGS) $<
+ifneq ($(SUBARCH),)
+restart: clone_$(SUBARCH).o
+restart: CFLAGS += -DARCH_HAS_CLONE_WITH_PID
+endif
+
+# ckptinfo dependencies
+ckptinfo: ckptinfo_types.o
 
 ckptinfo_types.c: $(CKPT_HEADERS) ckptinfo.py
 	@echo cat $(CKPT_HEADERS) | ./ckptinfo.py > ckptinfo_types.c
 	@cat $(CKPT_HEADERS) | ./ckptinfo.py > ckptinfo_types.c
-
-%.o:	%.c
 
 install:
 	@echo /usr/bin/install -m 755 checkpoint restart self_restart ckptinfo $(INSTALL_DIR)
