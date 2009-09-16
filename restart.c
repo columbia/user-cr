@@ -1,5 +1,5 @@
 /*
- *  mktree.c: restart of multiple processes
+ *  restart.c: restart of multiple processes
  *
  *  Copyright (C) 2008-2009 Oren Laadan
  *
@@ -35,8 +35,8 @@
 #include <linux/checkpoint_hdr.h>
 
 static char usage_str[] =
-"usage: mktree [opts]\n"
-"  mktree restores from a checkpoint image by first creating in userspace\n"
+"usage: restart [opts]\n"
+"  restart restores from a checkpoint image by first creating in userspace\n"
 "  the original tasks tree, and then calling sys_restart by each task.\n"
 "\tOptions:\n"
 "\t -h,--help             print this help message\n"
@@ -56,25 +56,25 @@ static char usage_str[] =
 "";
 
 /*
- * By default, 'mktree' creates a new pid namespace in which the
+ * By default, 'restart' creates a new pid namespace in which the
  * restart takes place, using the original pids from the time of the
  * checkpoint. This requires that CLONE_NEWPID and clone_with_pids()
  * be enabled.
  *
  * Restart can also occur in the current namespace, however pids from
  * the time of the checkpoint may be already in use then. Therefore,
- * by default, 'mktree' creates an equivalen tree without restoring
+ * by default, 'restart' creates an equivalen tree without restoring
  * the original pids, assuming that the application can tolerate this.
  * For this, the 'ckpt_pids' array is transformed on-the-fly before it
  * is fed to the kernel.
  *
  * By default, "--pids" implied "--pidns" and vice-versa. The user can
  * use "--pids --no-pidns" for a restart in the currnet namespace -
- * 'mktree' will attempt to create the new tree with the original pids
+ * 'restart' will attempt to create the new tree with the original pids
  * from the time of the checkpoint, if possible. This requires that
  * clone_with_pids() be enabled.
  *
- * To re-create the tasks tree in user space, 'mktree' reads the
+ * To re-create the tasks tree in user space, 'restart' reads the
  * header and tree data from the checkpoint image tree. It makes up
  * for the data that was consumed by using a helper process that
  * provides the data back to the restart syscall, followed by the rest
@@ -327,7 +327,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		case 4:
 			sig = atoi(optarg);
 			if (sig < 0 || sig >= NSIG) {
-				printf("mktree: invalid signal number\n");
+				printf("restart: invalid signal number\n");
 				exit(1);
 			}
 			global_send_sigint = sig;
@@ -369,7 +369,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 
 #ifndef CLONE_NEWPID
 	if (args->pidns) {
-		printf("This version of mktree was compiled without "
+		printf("This version of restart was compiled without "
 		       "support for --pidns.\n");
 		exit(1);
 	}
@@ -377,7 +377,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 
 #ifndef CHECKPOINT_DEBUG
 	if (global_debug) {
-		printf("This version of mktree was compiled without "
+		printf("This version of restart was compiled without "
 		       "support for --debug.\n");
 		exit(1);
 	}
@@ -388,7 +388,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 
 #ifndef __NR_clone_with_pids
 	if (args->pids) {
-		printf("This version of mktree was compiled without "
+		printf("This version of restart was compiled without "
 		       "support for --pids.\n");
 		exit(1);
 	}

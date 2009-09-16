@@ -1,5 +1,5 @@
 /*
- *  self.c: demonstrate self-checkpoint
+ *  self_checkpoint.c: demonstrate self-checkpoint
  *
  *  Copyright (C) 2008 Oren Laadan
  *

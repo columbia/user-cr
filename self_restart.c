@@ -1,5 +1,5 @@
 /*
- *  rstr.c: restart a single process
+ *  self_restart.c: restart a single process
  *
  *  Copyright (C) 2008 Oren Laadan
  *

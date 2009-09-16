@@ -1,5 +1,5 @@
 /*
- *  ckpt.c: checkpoint one or multiple processes
+ *  checkpoint.c: checkpoint one or multiple processes
  *
  *  Copyright (C) 2008 Oren Laadan
  *
@@ -20,12 +20,12 @@
 
 static char usage_str[] =
 "usage: ckpt [opts] PID\n"
-"  'ckpt' takes a checkpoint of the task indicated by PID, and all its\n"
-"  descendents, and outputs the checkpoint image. If the task is the\n"
+"  'checkpoint' takes a checkpoint of the task indicated by PID, and all\n"
+"  its descendents, and outputs the checkpoint image. If the task is the\n"
 "  init(1) process of a container, it checkpoints the entire container.\n"
-"  By default 'ckpt' allows to checkpoint any subtree of tasks. The user\n"
-"  can override this feature and request that only whole containers be\n"
-"  considered.\n"
+"  By default 'checkpoint' allows to checkpoint any subtree of tasks. The\n"
+"  user can override this feature and request that only whole containers\n"
+"  be considered.\n"
 "\n"
 "\tOptions:\n"
 "\t -h,--help             print this help message\n"
