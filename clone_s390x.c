@@ -24,6 +24,12 @@
  */
 #if defined(__NR_clone_with_pids)
 
+/* this really belongs to some kernel header ! */
+struct pid_set {
+	int num_pids;
+	pid_t *pids;
+};
+
 /* (see: http://lkml.indiana.edu/hypermail/linux/kernel/9604.3/0204.html) */
 
 #define do_clone_with_pids(stack, flags, ptid, ctid, setp) ({ \
@@ -47,7 +53,7 @@
 	})
 
 int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
-			struct target_pid_set *target_pids, void *arg)
+			struct pid_set *target_pids, void *arg)
 {
 	long retval;
 	retval = do_clone_with_pids(child_stack, flags, NULL, NULL,
