@@ -1841,7 +1841,7 @@ static int ckpt_read(int fd, void *buf, int count)
 	int ret;
 
 	ret = _ckpt_read(fd, buf, count);
-	if (ret == 0) {
+	if (ret == 0 && count) {
 		errno = EINVAL;
 		ret = -1;
 	}
