@@ -1122,12 +1122,6 @@ static int ckpt_set_creator(struct ckpt_ctx *ctx, struct task *task)
 		return -1;
 	}
 
-	/* only root_task can have ppid == 0, parent must always exist */
-	if (task->ppid == 0 || !parent) {
-		ckpt_err("pid %d: invalid ppid %d\n", task->pid, task->ppid);
-		return -1;
-	}
-
 	/* sid == 0 must have been inherited from outside the container */
 	if (task->sid == 0)
 		session = ckpt_init_task(ctx);
@@ -1136,7 +1130,16 @@ static int ckpt_set_creator(struct ckpt_ctx *ctx, struct task *task)
 		/* thread: creator is thread-group-leader */
 		ckpt_dbg("pid %d: thread tgid %d\n", task->pid, task->tgid);
 		creator = hash_lookup(ctx, task->tgid);
+		if (!creator) {
+			/* oops... thread group leader MIA */
+			ckpt_err("pid %d: no leader %d\n", task->pid, task->tgid);
+			return -1;
+		}
 		task->flags |= TASK_THREAD;
+	} else if (task->ppid == 0 || !parent) {
+		/* only root_task can have ppid == 0, parent must always exist */
+		ckpt_err("pid %d: invalid ppid %d\n", task->pid, task->ppid);
+		return -1;
 	} else if (task->pid == task->sid) {
 		/* session leader: creator is parent */
 		ckpt_dbg("pid %d: session leader\n", task->pid);
