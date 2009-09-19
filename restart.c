@@ -63,6 +63,7 @@ static char usage_str[] =
 "  -p,--pidns            create a new pid namspace (default with --pids)\n"
 "  -P,--no-pidns         do not create a new pid namespace (default)\n"
 "     --pids             restore original pids (default with --pidns)\n"
+"     --self             restart a single task, usually from self-checkpoint\n"
 "  -r,--root=ROOT        restart under the directory ROOT instead of current\n"
 "     --signal=SIG       send SIG to root task on SIGINT (default: SIGKILL\n"
 "                        to container root, SIGINT otherwise)\n"
@@ -335,6 +336,7 @@ struct pid_swap {
 };
 
 struct args {
+	int self;
 	int pids;
 	int pidns;
 	int no_pidns;
@@ -372,6 +374,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "pidns",	no_argument,		NULL, 'p' },
 		{ "no-pidns",	no_argument,		NULL, 'P' },
 		{ "pids",	no_argument,		NULL, 3 },
+		{ "self",	no_argument,		NULL, 6},
 		{ "signal",	required_argument,	NULL, 4 },
 		{ "inspect",	no_argument,		NULL, 5 },
 		{ "input",	required_argument,		NULL, 'i' },
@@ -416,6 +419,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			break;
 		case 'P':
 			args->no_pidns = 1;
+			break;
+		case 6:  /* --self */
+			args->self = 1;
 			break;
 		case 4:  /* --signal */
 			sig = str2sig(optarg);
@@ -488,6 +494,13 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		exit(1);
 	}
 #endif
+
+	if (args->self &&
+	    (args->pids || args->pidns || args->no_pidns || args->wait ||
+	     args->show_status || args->copy_status || args->freezer)) {
+		printf("Invalid mix of --self with multiprocess options\n");
+		exit(1);
+	}
 }
 
 static void report_exit_status(int status, char *str, int debug)
@@ -650,13 +663,21 @@ int main(int argc, char *argv[])
 	if (args.freezer && freezer_prepare(&ctx) < 0)
 		exit(1);
 
-	setpgrp();
-
 	/* chroot ? */
 	if (args.root && chroot(args.root) < 0) {
 		perror("chroot");
 		exit(1);
 	}
+
+	/* self-restart ends here: */
+	if (args.self) {
+		restart(getpid(), STDIN_FILENO, RESTART_TASKSELF);
+		/* reach here if restart(2) failed ! */
+		perror("restart");
+		exit(1);
+	}
+
+	setpgrp();
 
 	ret = ckpt_read_header(&ctx);
 	if (ret < 0) {

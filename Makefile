@@ -35,7 +35,7 @@ CFLAGS += -g $(WARNS) $(CKPT_INCLUDE) $(DEBUG)
 # install dir
 INSTALL_DIR = /bin
 
-PROGS =	self_checkpoint self_restart checkpoint restart ckptinfo
+PROGS =	checkpoint restart ckptinfo
 
 # other cleanup
 OTHER = ckptinfo_types.c
@@ -43,7 +43,6 @@ OTHER = ckptinfo_types.c
 LDLIBS = -lm
 
 all: $(PROGS)
-	echo $(SUBARCH)
 	@make -C test
 
 # restart needs to be thread-safe
@@ -68,8 +67,8 @@ ckptinfo_types.c: $(CKPT_HEADERS) ckptinfo.py
 	@cat $(CKPT_HEADERS) | ./ckptinfo.py > ckptinfo_types.c
 
 install:
-	@echo /usr/bin/install -m 755 checkpoint restart self_restart ckptinfo $(INSTALL_DIR)
-	@/usr/bin/install -m 755 checkpoint restart self_restart ckptinfo $(INSTALL_DIR)
+	@echo /usr/bin/install -m 755 checkpoint restart ckptinfo $(INSTALL_DIR)
+	@/usr/bin/install -m 755 checkpoint restart ckptinfo $(INSTALL_DIR)
 
 clean:
 	@rm -f $(PROGS) $(OTHER) *~ *.o
