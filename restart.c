@@ -377,8 +377,8 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "self",	no_argument,		NULL, 6},
 		{ "signal",	required_argument,	NULL, 4 },
 		{ "inspect",	no_argument,		NULL, 5 },
-		{ "input",	required_argument,		NULL, 'i' },
-		{ "root",	required_argument,		NULL, 'r' },
+		{ "input",	required_argument,	NULL, 'i' },
+		{ "root",	required_argument,	NULL, 'r' },
 		{ "wait",	no_argument,		NULL, 'w' },
 		{ "show-status",	no_argument,	NULL, 1 },
 		{ "copy-status",	no_argument,	NULL, 2 },
@@ -657,6 +657,8 @@ int main(int argc, char *argv[])
 			perror("dup2 input file");
 			exit(1);
 		}
+		if (ret != STDIN_FILENO)
+			close(ret);
 	}
 
 	/* freezer preparation */

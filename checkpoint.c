@@ -1,7 +1,7 @@
 /*
  *  checkpoint.c: checkpoint one or multiple processes
  *
- *  Copyright (C) 2008 Oren Laadan
+ *  Copyright (C) 2008-2009 Oren Laadan
  *
  *  This file is subject to the terms and conditions of the GNU General Public
  *  License.  See the file COPYING in the main directory of the Linux
@@ -14,6 +14,8 @@
 #include <errno.h>
 #include <getopt.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/types.h>
 #include <sys/syscall.h>
 
 #include <linux/checkpoint.h>
@@ -28,12 +30,14 @@ static char usage_str[] =
 "  be considered.\n"
 "\n"
 "\tOptions:\n"
-"\t -h,--help             print this help message\n"
-"\t -c,--container        require the PID is a container-init\n"
-"\t -v,--verbose          verbose output\n"
+"  -h,--help             print this help message\n"
+"  -o,--output=FILE      write data to FILE instead of standard output\n"
+"  -c,--container        require the PID is a container-init\n"
+"  -v,--verbose          verbose output\n"
 "";
 
 struct args {
+	char *output;
 	int container;
 	int verbose;
 };
@@ -48,11 +52,12 @@ static void parse_args(struct args *args, int argc, char *argv[])
 {
 	static struct option opts[] = {
 		{ "help",	no_argument,		NULL, 'h' },
+		{ "output",	required_argument,	NULL, 'o' },
 		{ "container",	no_argument,		NULL, 'c' },
 		{ "verbose",	no_argument,		NULL, 'v' },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hvc";
+	static char optc[] = "hvco:";
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, NULL);
@@ -63,6 +68,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			exit(1);
 		case 'h':
 			usage(usage_str);
+		case 'o':
+			args->output = optarg;
+			break;
 		case 'c':
 			args->container = 1;
 			break;
@@ -96,6 +104,21 @@ int main(int argc, char *argv[])
 	if (pid <= 0) {
 		printf("invalid pid\n");
 		exit(1);
+	}
+
+	/* output file (default: stdout) */
+	if (args.output) {
+		ret = open(args.output, O_RDWR | O_CREAT, 0);
+		if (ret < 0) {
+			perror("open output file");
+			exit(1);
+		}
+		if (dup2(ret, STDOUT_FILENO) < 0) {
+			perror("dup2 output file");
+			exit(1);
+		}
+		if (ret != STDOUT_FILENO)
+			close(ret);
 	}
 
 	ret = syscall(__NR_checkpoint, pid, STDOUT_FILENO, flags);
