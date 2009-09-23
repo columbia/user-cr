@@ -63,7 +63,7 @@ static int image_parse_error(struct ckpt_hdr *h, int fd, struct args *args);
 #define __HAVE_image_parse_cpu
 #define image_parse_cpu   image_parse_cpu_X86
 static int image_parse_cpu_X86(struct ckpt_hdr *h, int fd, struct args *args);
-#elif defined(__s390__)
+#elif defined(__s390__) || defined(__s390x__)
 #define __HAVE_image_parse_cpu
 #define image_parse_cpu   image_parse_cpu_s390
 static int image_parse_cpu_s390(struct ckpt_hdr *h, int fd, struct args *args);
@@ -301,7 +301,7 @@ static int image_parse_cpu_X86(struct ckpt_hdr *h, int fd, struct args *args)
 }
 #endif
 
-#ifdef __s390__
+#if defined(__s390__) || defined(__s390x__)
 static int image_parse_cpu_s390(struct ckpt_hdr *h, int fd, struct args *args)
 {
 	struct ckpt_hdr_cpu *hh = (struct ckpt_hdr_cpu *) h;
