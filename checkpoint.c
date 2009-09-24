@@ -42,6 +42,11 @@ struct args {
 	int verbose;
 };
 
+inline static int checkpoint(pid_t pid, int fd, unsigned long flags)
+{
+	return syscall(__NR_checkpoint, pid, fd, flags);
+}
+
 static void usage(char *str)
 {
 	fprintf(stderr, "%s", str);
@@ -121,7 +126,7 @@ int main(int argc, char *argv[])
 			close(ret);
 	}
 
-	ret = syscall(__NR_checkpoint, pid, STDOUT_FILENO, flags);
+	ret = checkpoint(pid, STDOUT_FILENO, flags);
 
 	if (ret < 0) {
 		perror("checkpoint");
