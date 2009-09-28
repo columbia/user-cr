@@ -16,6 +16,17 @@
 #include <sys/syscall.h>
 #include <asm/unistd.h>
 
+struct target_pid_set;
+
+extern int __clone_with_pids(int (*fn)(void *arg),
+			     void *child_stack ,
+			     int flags,
+			     void *arg,
+			     void *parent_tid,
+			     void *tls,
+			     void *child_tid,
+			     struct target_pid_set *setp);
+
 /*
  * libc doesn't support clone_with_pid() yet...
  * below is arch-dependent code to use the syscall
@@ -24,7 +35,7 @@
 
 /* (see: http://lkml.indiana.edu/hypermail/linux/kernel/9604.3/0204.html) */
 
-static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
+int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
 			   struct target_pid_set *target_pids, void *arg)
 {
 	void *parent_tid = NULL;
