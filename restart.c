@@ -1046,7 +1046,6 @@ static int ckpt_setup_task(struct ckpt_ctx *ctx, pid_t pid, pid_t ppid)
 
 	task->flags = TASK_GHOST;
 
-	/* */
 	task->pid = pid;
 	task->ppid = ppid;
 	task->tgid = pid;
@@ -1078,18 +1077,38 @@ static int ckpt_init_tree(struct ckpt_ctx *ctx)
 	struct task *task;
 	pid_t root_sid;
 	pid_t root_pid;
-	pid_t root_pgid;
 	int i;
 
 	root_pid = pids_arr[0].vpid;
 	root_sid = pids_arr[0].vsid;
-	root_pgid = pids_arr[0].vpgid;
+
+	/*
+	 * The case where root_sid != root_pid is special. It must be
+	 * from a subtree checkpoint (in container, root_sid is either
+	 * root_pid or 0).
+	 * This means that root_sid was inherited from an ancestor of
+	 * that subtree. So we make root_task here also inherit its
+	 * sid from its ancestor (whatever the 'restart' process had).
+	 *
+	 * We do it by forcing it to be 0. We also need to force all
+	 * references to it from other processes, via sid and pgid, to
+	 * 0. For that, we keep the root_sid to compare against (see
+	 * one-line comment below).
+	 */
+	if (root_sid == root_pid)
+		root_sid = 0;
 
 	/* populate with known tasks */
 	for (i = 0; i < pids_nr; i++) {
 		task = &ctx->tasks_arr[i];
 
 		task->flags = 0;
+
+		/* zero references to root_sid (root_sid != root_pid) */
+		if (pids_arr[i].vsid == root_sid)
+			pids_arr[i].vsid = 0;
+		if (pids_arr[i].vpgid == root_sid)
+			pids_arr[i].vpgid = 0;
 
 		task->pid = pids_arr[i].vpid;
 		task->ppid = pids_arr[i].vppid;
@@ -1132,6 +1151,14 @@ static int ckpt_init_tree(struct ckpt_ctx *ctx)
 		 */
 		if (ckpt_setup_task(ctx, sid, root_pid) < 0)
 			return -1;
+
+		/*
+		 * An sid == 0 means that the session was inherited an
+		 * ancestor of root_task, and more specifically, via
+		 * root_task itself: make root_task our parent.
+		 */
+		if (sid == 0)
+			sid = root_pid;
 
 		/*
 		 * If a pid belongs to a dead thread group leader, we
