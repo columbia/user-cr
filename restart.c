@@ -1546,6 +1546,13 @@ static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 	close(ctx->pipe_out);
 
 	/*
+	 * At this point restart may have already begun in the kernel.
+	 * We shouldn't be doing much until sys_restart() below. With
+	 * threads, sys_restart() ensures that all members of a thread
+	 * group are ready before restoring any of them.
+	 */
+
+	/*
 	 * Ghost tasks are not restarted and end up dead, but their
 	 * pids are referred to by other tasks' pgids (also sids, that
 	 * are already properly set by now). Therefore, they stick
