@@ -1485,10 +1485,12 @@ static int ckpt_propagate_session(struct ckpt_ctx *ctx, struct task *task)
  * needed. In the second pass the task forks the remainder of the
  * children. In both passes, a child that is marked TASK_THREAD is
  * created as a thread and a child that is marked TASK_SIBLING is
- * created with parent inheritance. In the third pass, terminated
- * tasks and temporary placeholders are cleaned up. Finally, the task
- * either terminates if it is marked TASK_DEAD or calls sys_restart()
- * which does not return.
+ * created with parent inheritance. Finally, the task will invoke
+ * sys_restart() which does not return (if successful).
+ *
+ * Tasks marked TASK_DEAD or TASK_GHOST are both destined to terminate
+ * anyway; both use flag RESTART_GHOST for sys_restart(), which will
+ * result in a call to do_exit().
  */
 static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 {
@@ -1534,23 +1536,6 @@ static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 		}
 	}
 	
-	/* 3rd pass: bring out your deads ... */
-	for (child = task->children; child; child = child->next_sib) {
-		if (child->flags & TASK_DEAD) {
-			ret = waitpid(child->rpid, NULL, 0);
-			if (ret < 0) {
-				perror("waitpid");
-				return -1;
-			}
-		}
-	}
-
-	/* are we supposed to exit now ? */
-	if (task->flags & TASK_DEAD) {
-		ckpt_dbg("pid %d: task dead ... exiting\n", task->pid);
-		exit(0);
-	}
-
 	/*
 	 * In '--no-pidns' (and not '--pids') mode we restart with
 	 * pids different than originals, so report old/new pids via
@@ -1587,7 +1572,7 @@ static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 	 * then exit (more precisely, killed). The RESTART_GHOST flag
 	 * tells the kernel that they are not to be restored.
 	 */
-	if (task->flags & TASK_GHOST)
+	if (task->flags & (TASK_GHOST | TASK_DEAD))
 		flags |= RESTART_GHOST;
 
 	/* on success this doesn't return */
@@ -1907,9 +1892,7 @@ static int ckpt_adjust_pids(struct ckpt_ctx *ctx)
 
 	/* read in 'pid_swap' data and adjust ctx->pids_arr */
 	for (n = 0; n < ctx->tasks_nr; n++) {
-		/* don't expect data from dead tasks */
-		if (ctx->tasks_arr[n].flags & TASK_DEAD)
-			continue;
+		/* get pid info from next task */
 		ret = read(ctx->pipe_in, &swap, sizeof(swap));
 		if (ret < 0)
 			ckpt_abort(ctx, "read pipe");
