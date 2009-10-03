@@ -31,6 +31,7 @@ extern int __clone_with_pids(int (*fn)(void *arg),
  * libc doesn't support clone_with_pid() yet...
  * below is arch-dependent code to use the syscall
  */
+#include <linux/checkpoint.h>
 #if defined(__NR_clone_with_pids)
 
 /* (see: http://lkml.indiana.edu/hypermail/linux/kernel/9604.3/0204.html) */

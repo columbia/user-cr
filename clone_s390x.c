@@ -22,6 +22,7 @@
  * libc doesn't support clone_with_pid() yet...
  * below is arch-dependent code to use the syscall
  */
+#include <linux/checkpoint.h>
 #if defined(__NR_clone_with_pids)
 
 /* this really belongs to some kernel header ! */

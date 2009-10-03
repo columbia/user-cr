@@ -1,24 +1,9 @@
-
 KERNELSRC ?= ../linux
-KERNELBUILD ?= ../linux
 
-# default with 'make headers_install'
-KERNELHDR ?= $(KERNELSRC)/usr/include
-
-ifneq "$(realpath $(KERNELHDR)/linux/checkpoint.h)" ""
-# if .../usr/include contains our headers
-CKPT_INCLUDE = -I$(KERNELHDR)
-CKPT_HEADERS = $(KERNELHDR)/linux/checkpoint_hdr.h \
-	       $(KERNELHDR)/asm/checkpoint_hdr.h
-else
-# else, usr the kernel source itself
-# but first, find linux architecure
-KERN_ARCH = $(shell readlink $(KERNELBUILD)/include/asm | sed 's/^asm-//')
-CKPT_INCLUDE = -I$(KERNELSRC)/include \
-	       -I$(KERNELSRC)/arch/$(KERN_ARCH)/include
-CKPT_HEADERS = $(KERNELSRC)/include/linux/checkpoint_hdr.h \
-	       $(KERNELSRC)/arch/$(KERN_ARCH)/include/asm/checkpoint_hdr.h
-endif
+CKPT_INCLUDE = -I./include
+CKPT_HEADERS = include/linux/checkpoint.h \
+		include/linux/checkpoint_hdr.h \
+		include/asm/checkpoint_hdr.h
 
 # detect architecture (for clone_with_pids)
 SUBARCH = $(patsubst i%86,x86_32,$(shell uname -m))
@@ -42,6 +27,8 @@ OTHER = ckptinfo_types.c
 
 LDLIBS = -lm
 
+.PHONY: all distclean clean headers install
+
 all: $(PROGS)
 	@make -C test
 
@@ -63,13 +50,20 @@ endif
 ckptinfo: ckptinfo_types.o
 
 ckptinfo_types.c: $(CKPT_HEADERS) ckptinfo.py
-	@echo cat $(CKPT_HEADERS) | ./ckptinfo.py > ckptinfo_types.c
-	@cat $(CKPT_HEADERS) | ./ckptinfo.py > ckptinfo_types.c
+	cat $(CKPT_HEADERS) | ./ckptinfo.py > ckptinfo_types.c
 
 install:
 	@echo /usr/bin/install -m 755 checkpoint restart ckptinfo $(INSTALL_DIR)
 	@/usr/bin/install -m 755 checkpoint restart ckptinfo $(INSTALL_DIR)
 
+$(CKPT_HEADERS): %:
+	./scripts/extract-headers.sh -s $(KERNELSRC) -o ./include
+
+headers: $(CKPT_HEADERS)
+
+distclean: clean
+	@rm -f $(CKPT_HEADERS)
+
 clean:
-	@rm -f $(PROGS) $(OTHER) *~ *.o
+	@rm -f $(PROGS) $(OTHER) *~ *.o headers.h
 	@make -C test clean
