@@ -894,7 +894,7 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 		return 0;
 }
 #else
-static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx, int *status)
+static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 {
 	printf("logical error: ckpt_coordinator_pidns unexpected\n");
 	exit(1);
