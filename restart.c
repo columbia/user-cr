@@ -264,6 +264,7 @@ struct ckpt_ctx {
 	
 	char header[BUFSIZE];
 	char header_arch[BUFSIZE];
+	char container[BUFSIZE];
 	char tree[BUFSIZE];
 	char buf[BUFSIZE];
 	struct args *args;
@@ -303,6 +304,7 @@ static int ckpt_write_obj(struct ckpt_ctx *ctx, struct ckpt_hdr *h);
 
 static int ckpt_write_header(struct ckpt_ctx *ctx);
 static int ckpt_write_header_arch(struct ckpt_ctx *ctx);
+static int ckpt_write_container(struct ckpt_ctx *ctx);
 static int ckpt_write_tree(struct ckpt_ctx *ctx);
 
 static int _ckpt_read(int fd, void *buf, int count);
@@ -313,6 +315,7 @@ static int ckpt_read_obj_type(struct ckpt_ctx *ctx, void *b, int n, int type);
 
 static int ckpt_read_header(struct ckpt_ctx *ctx);
 static int ckpt_read_header_arch(struct ckpt_ctx *ctx);
+static int ckpt_read_container(struct ckpt_ctx *ctx);
 static int ckpt_read_tree(struct ckpt_ctx *ctx);
 
 static int hash_init(struct ckpt_ctx *ctx);
@@ -690,6 +693,12 @@ int main(int argc, char *argv[])
 	ret = ckpt_read_header_arch(&ctx);
 	if (ret < 0) {
 		perror("read c/r header arch");
+		exit(1);
+	}
+
+	ret = ckpt_read_container(&ctx);
+	if (ret < 0) {
+		perror("read c/r container section");
 		exit(1);
 	}
 
@@ -1850,6 +1859,9 @@ static int ckpt_do_feeder(void *data)
 	if (ckpt_write_header_arch(ctx) < 0)
 		ckpt_abort(ctx, "write c/r header arch");
 
+	if (ckpt_write_container(ctx) < 0)
+		ckpt_abort(ctx, "write container section");
+
 	if (ckpt_write_tree(ctx) < 0)
 		ckpt_abort(ctx, "write c/r tree");
 
@@ -2102,6 +2114,14 @@ static int ckpt_read_header_arch(struct ckpt_ctx *ctx)
 	return 0;
 }
 
+static int ckpt_read_container(struct ckpt_ctx *ctx)
+{
+	struct ckpt_hdr_container *h;
+
+	h = (struct ckpt_hdr_container *) ctx->container;
+	return ckpt_read_obj_type(ctx, h, sizeof(*h), CKPT_HDR_CONTAINER);
+}
+
 static int ckpt_read_tree(struct ckpt_ctx *ctx)
 {
 	struct ckpt_hdr_tree *h;
@@ -2172,6 +2192,15 @@ static int ckpt_write_header_arch(struct ckpt_ctx *ctx)
 
 	h = (struct ckpt_hdr_header_arch *) ctx->header_arch;
 	return ckpt_write_obj(ctx, (struct ckpt_hdr *) h);
+}
+
+static int ckpt_write_container(struct ckpt_ctx *ctx)
+{
+	char *ptr;
+
+	ptr = (char *) ctx->container;
+	/* write the container info section */
+	return ckpt_write_obj(ctx, (struct ckpt_hdr *) ptr);
 }
 
 static int ckpt_write_tree(struct ckpt_ctx *ctx)
