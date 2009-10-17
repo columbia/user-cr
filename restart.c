@@ -773,6 +773,7 @@ static int ckpt_parse_status(int status, int mimic, int verbose)
 	if (mimic) {
 		if (sig) {
 			ckpt_dbg("mimic sig %d\n", sig);
+			signal(sig, SIG_DFL);  /* so kill() affects us */
 			kill(_getpid(), sig);
 		} else {
 			ckpt_dbg("mimic ret %d\n", ret);
