@@ -254,6 +254,7 @@ struct ckpt_ctx {
 
 	int pipe_child[2];	/* for children to report status */
 	int pipe_feed[2];	/* for feeder to provide input */
+	int pipe_coord[2];	/* for coord to report status (if needed) */
 
 	struct ckpt_pids *pids_arr;
 	struct ckpt_pids *copy_arr;
@@ -848,7 +849,32 @@ static int ckpt_probe_child(pid_t pid, char *str)
 #ifdef CLONE_NEWPID
 static int __ckpt_coordinator(void *arg)
 {
-	return ckpt_coordinator((struct ckpt_ctx *) arg);
+	struct ckpt_ctx *ctx = (struct ckpt_ctx *) arg;
+
+	if (!ctx->args->wait)
+		close(ctx->pipe_coord[0]);
+
+	return ckpt_coordinator(ctx);
+}
+
+static int ckpt_coordinator_status(struct ckpt_ctx *ctx)
+{
+	int status = -1;
+	int ret;
+
+	close(ctx->pipe_coord[1]);
+
+	ret = read(ctx->pipe_coord[0], &status, sizeof(status));
+	if (ret < 0)
+		perror("read coordinator status");
+	else if (ret == 0) {
+		/* coordinator failed to report */
+		ckpt_dbg("Coordinator failed to report status.");
+	} else
+		status = 0;
+
+	close(ctx->pipe_coord[0]);
+	return status;
 }
 
 static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
@@ -858,6 +884,15 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 	int copy;
 
 	ckpt_dbg("forking coordinator in new pidns\n");
+
+	/*
+	 * We won't wait for (collect) the coordinator, so we use a
+	 * pipe instead for the coordinator to report success/failure.
+	 */
+	if (!ctx->args->wait && pipe(ctx->pipe_coord)) {
+		perror("pipe");
+		return -1;
+	}
 
 	stk = malloc(PTHREAD_STACK_MIN);
 	if (!stk) {
@@ -893,7 +928,7 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 	if (ctx->args->wait)
 		return ckpt_collect_child(ctx);
 	else
-		return 0;
+		return ckpt_coordinator_status(ctx);
 }
 #else
 static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
@@ -941,17 +976,24 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 	ckpt_verbose("Success\n");
 	ckpt_dbg("restart succeeded\n");
 
+	ret = 0;
+
 	if (ctx->args->pidns && ctx->tasks_arr[0].pid != 1) {
 		/*
 		 * If root task isn't container init, we must stay
 		 * around and be reaper until all tasks are gone.
 		 * Otherwise, container will die as soon as we exit.
 		 */
+		if (!ctx->args->wait) {
+			/* report status because parent won't wait for us */
+			if (write(ctx->pipe_coord[1], &ret, sizeof(ret)) < 0) {
+				perror("failed to report status");
+				exit(1);
+			}
+		}
 		ret = ckpt_pretend_reaper(ctx);
 	} else if (ctx->args->wait) {
 		ret = ckpt_collect_child(ctx);
-	} else {
-		ret = 0;
 	}
 
 	if (ret < 0)
