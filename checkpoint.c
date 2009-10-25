@@ -32,12 +32,14 @@ static char usage_str[] =
 "\tOptions:\n"
 "  -h,--help             print this help message\n"
 "  -o,--output=FILE      write data to FILE instead of standard output\n"
+"     --output-fd=FD     write data to file descriptor FD instead of stdout\n"
 "  -c,--container        require the PID is a container-init\n"
 "  -v,--verbose          verbose output\n"
 "";
 
 struct args {
 	char *output;
+	int outputfd;
 	int container;
 	int verbose;
 };
@@ -53,16 +55,32 @@ static void usage(char *str)
 	exit(1);
 }
 
+/* negative retval means error */
+static int str2num(char *str)
+{
+	char *nptr;
+	int num;
+
+	num = strtol(str, &nptr, 10);
+	if (nptr - str != strlen(str))
+		num = -1;
+	return num;
+}
+
 static void parse_args(struct args *args, int argc, char *argv[])
 {
 	static struct option opts[] = {
 		{ "help",	no_argument,		NULL, 'h' },
 		{ "output",	required_argument,	NULL, 'o' },
+		{ "output-fd",	required_argument,	NULL, 1 },
 		{ "container",	no_argument,		NULL, 'c' },
 		{ "verbose",	no_argument,		NULL, 'v' },
 		{ NULL,		0,			NULL, 0 }
 	};
 	static char optc[] = "hvco:";
+
+	/* defaults */
+	args->outputfd = -1;
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, NULL);
@@ -76,6 +94,13 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		case 'o':
 			args->output = optarg;
 			break;
+		case 1:
+			args->outputfd = str2num(optarg);
+			if (args->outputfd < 0) {
+				printf("checkpoint: invalid file descriptor\n");
+				exit(1);
+			}
+			break;
 		case 'c':
 			args->container = 1;
 			break;
@@ -85,6 +110,11 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		default:
 			usage(usage_str);
 		}
+	}
+
+	if (args->output && args->outputfd >= 0) {
+		printf("Invalid used of both -o/--output and --output-fd\n");
+		exit(1);
 	}
 }
 
@@ -111,19 +141,23 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	/* output file (default: stdout) */
+	/* output file */
 	if (args.output) {
-		ret = open(args.output, O_RDWR | O_CREAT, 0);
-		if (ret < 0) {
+		args.outputfd = open(args.output, O_RDWR | O_CREAT, 0);
+		if (args.outputfd < 0) {
 			perror("open output file");
 			exit(1);
 		}
-		if (dup2(ret, STDOUT_FILENO) < 0) {
+	}
+
+	/* output file descriptor (default: stdout) */
+	if (args.outputfd >= 0) {
+		if (dup2(args.outputfd, STDOUT_FILENO) < 0) {
 			perror("dup2 output file");
 			exit(1);
 		}
-		if (ret != STDOUT_FILENO)
-			close(ret);
+		if (args.outputfd != STDOUT_FILENO)
+			close(args.outputfd);
 	}
 
 	ret = checkpoint(pid, STDOUT_FILENO, flags);
