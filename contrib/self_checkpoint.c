@@ -45,7 +45,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	fprintf(file, "hello, world (%.2f)!\n", a);
+	fprintf(file, "hello, world!\n");
 	fflush(file);
 
 	for (i = 0; i < 1000; i++) {
