@@ -49,7 +49,7 @@ if [ -z "${KERNELSRC}" -o '!' -d "${KERNELSRC}" ]; then
 fi
 
 # Match cpp includes
-INCLUDE_PRE_REGEX='#[[:space:]]*include[[:space:]]*\([<"]'
+INCLUDE_PRE_REGEX='#[ \t]*include[ \t]*\([<"]'
 INCLUDE_FILE_REGEX='[^">]*'
 INCLUDE_POST_REGEX='[">]\)'
 
@@ -84,7 +84,7 @@ function do_cpp ()
 	sed -e 's|'"${INCLUDE_REGEX}"'|/*#include \1*/|g' "${CPP_FILE}" | \
 	cpp -CC -P -U__KERNEL__ -undef -nostdinc -fdirectives-only -dDI "$@" | \
 	awk 'BEGIN { do_print = 0; }
-	     /#[[:space:]]*define '"${START_DEFINE}"'/  { do_print = 1; next; }
+	     /#[ \t]*define '"${START_DEFINE}"'/  { do_print = 1; next; }
 	     (do_print == 1)				{ print }' | \
 	cat -s | \
 	sed -e 's|/\*'"${INCLUDE_REGEX}"'\*/|#include \1|g' | \
@@ -144,7 +144,7 @@ echo '#endif /* _CHECKPOINT_CKPT_HDR_H_ */' >> "${OUTPUT_INCLUDES}/linux/checkpo
 # We use ARCH_COND to break up architecture-specific sections of the header.
 #
 ARCH_COND='#if'
-REGEX='[[:space:]]*#[[:space:]]*define[[:space:]]+__NR_(checkpoint|restart|clone_with_pids)[[:space:]]+[[:digit:]]+'
+REGEX='[ \t]*#[ \t]*define[ \t]+__NR_(checkpoint|restart|clone_with_pids)[ \t]+[0-9]+'
 
 cat - <<-EOFOE
 /*
@@ -167,7 +167,7 @@ while read UNISTDH ; do
 	CPPARCH="$(karch_to_cpparch "${KARCH}" "${WORDBITS}")"
 	echo -e "${ARCH_COND} __${CPPARCH}__\\n"
 	grep -E "${REGEX}" "${UNISTDH}" | \
-	sed -e 's/^[[:space:]]*#[[:space:]]*define[[:space:]]\+__NR_\([^[:space:]]\+\)[[:space:]]\+\([^[:space:]]\+\).*$/#\tifndef __NR_\1\n#\t\tdefine __NR_\1 \2\n#\tendif\n/'
+	sed -e 's/^[ \t]*#[ \t]*define[ \t]\+__NR_\([^ \t]\+\)[ \t]\+\([^ \t]\+\).*$/#\tifndef __NR_\1\n#\t\tdefine __NR_\1 \2\n#\tendif\n/'
 	ARCH_COND='#elif'
 done
 
