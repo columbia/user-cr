@@ -74,6 +74,8 @@ static char usage_str[] =
 "  -F,--freezer=CGROUP   freeze tasks in freezer group CGROUP on success\n"
 "  -i,--input=FILE       read data from FILE instead of standard input\n"
 "     --input-fd=FD      read data from file descriptor FD (instead of stdin)\n"
+"  -l,--logfile=FILE     write error and debug data to FILE (default=none)\n"
+"     --logfile-fd=FD    write error and debug data to file desctiptor FD\n"
 "     --inspect          inspect image on-the-fly for error records\n"
 "  -v,--verbose          verbose output\n"
 "  -d,--debug            debugging output\n"
@@ -195,9 +197,9 @@ static int str2sig(char *str)
 	return -1;
 }
 
-inline static int restart(pid_t pid, int fd, unsigned long flags)
+inline static int restart(pid_t pid, int fd, unsigned long flags, int logfd)
 {
-	return syscall(__NR_restart, pid, fd, flags);
+	return syscall(__NR_restart, pid, fd, flags, logfd);
 }
 
 #define BUFSIZE  (4 * 4096)
@@ -354,7 +356,9 @@ struct args {
 	int copy_status;
 	char *freezer;
 	char *input;
-	int inputfd;
+	int infd;
+	char *logfile;
+	int logfd;
 };
 
 static void usage(char *str)
@@ -387,6 +391,8 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "inspect",	no_argument,		NULL, 5 },
 		{ "input",	required_argument,	NULL, 'i' },
 		{ "input-fd",	required_argument,	NULL, 7 },
+		{ "logfile",	required_argument,	NULL, 'l' },
+		{ "logfile-fd",	required_argument,	NULL, 8 },
 		{ "root",	required_argument,	NULL, 'r' },
 		{ "wait",	no_argument,		NULL, 'w' },
 		{ "show-status",	no_argument,	NULL, 1 },
@@ -397,14 +403,15 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "debug",	no_argument,		NULL, 'd' },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hdvpPwWF:r:i:";
+	static char optc[] = "hdvpPwWF:r:i:l:";
 
 	int sig;
 
 	/* defaults */
 	memset(args, 0, sizeof(*args));
 	args->wait = 1;
-	args->inputfd = -1;
+	args->infd = -1;
+	args->logfd = -1;
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, NULL);
@@ -425,8 +432,18 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			args->input = optarg;
 			break;
 		case 7:
-			args->inputfd = str2num(optarg);
-			if (args->inputfd < 0) {
+			args->infd = str2num(optarg);
+			if (args->infd < 0) {
+				printf("restart: invalid file descriptor\n");
+				exit(1);
+			}
+			break;
+		case 'l':
+			args->logfile = optarg;
+			break;
+		case 8:
+			args->logfd = str2num(optarg);
+			if (args->logfd < 0) {
 				printf("restart: invalid file descriptor\n");
 				exit(1);
 			}
@@ -519,8 +536,13 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		exit(1);
 	}
 
-	if (args->input && args->inputfd >= 0) {
+	if (args->input && args->infd >= 0) {
 		printf("Invalid used of both -i/--input and --input-fd\n");
+		exit(1);
+	}
+
+	if (args->logfile && args->logfd >= 0) {
+		printf("Invalid used of both -l/--logfile and --logfile-fd\n");
 		exit(1);
 	}
 }
@@ -670,22 +692,36 @@ int main(int argc, char *argv[])
 
 	/* input file ? */
 	if (args.input) {
-		args.inputfd = open(args.input, O_RDONLY, 0);
-		if (args.inputfd < 0) {
+		args.infd = open(args.input, O_RDONLY, 0);
+		if (args.infd < 0) {
 			perror("open input file");
 			exit(1);
 		}
 	}
 
 	/* input file descriptor (default: stdin) */
-	if (args.inputfd >= 0) {
-		if (dup2(args.inputfd, STDIN_FILENO) < 0) {
+	if (args.infd >= 0) {
+		if (dup2(args.infd, STDIN_FILENO) < 0) {
 			perror("dup2 input file");
 			exit(1);
 		}
-		if (args.inputfd != STDIN_FILENO)
-			close(args.inputfd);
+		if (args.infd != STDIN_FILENO)
+			close(args.infd);
 	}
+
+	/* (optional) log file */
+	if (args.logfile) {
+		args.logfd = open(args.logfile,
+				  O_RDWR | O_CREAT | O_EXCL, 0644);
+		if (args.logfd < 0) {
+			perror("open log file");
+			exit(1);
+		}
+	}
+
+	/* output file descriptor (default: none) */
+	if (args.logfd < 0)
+		args.logfd = CHECKPOINT_FD_NONE;
 
 	/* freezer preparation */
 	if (args.freezer && freezer_prepare(&ctx) < 0)
@@ -699,7 +735,7 @@ int main(int argc, char *argv[])
 
 	/* self-restart ends here: */
 	if (args.self) {
-		restart(getpid(), STDIN_FILENO, RESTART_TASKSELF);
+		restart(getpid(), STDIN_FILENO, RESTART_TASKSELF, args.logfd);
 		/* reach here if restart(2) failed ! */
 		perror("restart");
 		exit(1);
@@ -984,7 +1020,7 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 	if (ctx->args->freezer)
 		flags |= RESTART_FROZEN;
 
-	ret = restart(root_pid, STDIN_FILENO, flags);
+	ret = restart(root_pid, STDIN_FILENO, flags, ctx->args->logfd);
 
 	if (ret < 0) {
 		perror("restart failed");
@@ -1652,7 +1688,7 @@ static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 
 	/* on success this doesn't return */
 	ckpt_dbg("about to call sys_restart(), flags %#lx\n", flags);
-	ret = restart(0, STDIN_FILENO, flags);
+	ret = restart(0, STDIN_FILENO, flags, CHECKPOINT_FD_NONE);
 	if (ret < 0)
 		perror("task restore failed");
 	return ret;

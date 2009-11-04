@@ -33,20 +33,24 @@ static char usage_str[] =
 "  -h,--help             print this help message\n"
 "  -o,--output=FILE      write data to FILE instead of standard output\n"
 "     --output-fd=FD     write data to file descriptor FD instead of stdout\n"
+"  -l,--logfile=FILE     write error and debug data to FILE (default=none)\n"
+"     --logile-fd=FD     write error and debug data to file descriptor FD\n"
 "  -c,--container        require the PID is a container-init\n"
 "  -v,--verbose          verbose output\n"
 "";
 
 struct args {
 	char *output;
-	int outputfd;
+	int outfd;
+	char *logfile;
+	int logfd;
 	int container;
 	int verbose;
 };
 
-inline static int checkpoint(pid_t pid, int fd, unsigned long flags)
+inline static int checkpoint(pid_t pid, int fd, unsigned long flags, int logfd)
 {
-	return syscall(__NR_checkpoint, pid, fd, flags);
+	return syscall(__NR_checkpoint, pid, fd, flags, logfd);
 }
 
 static void usage(char *str)
@@ -73,14 +77,17 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "help",	no_argument,		NULL, 'h' },
 		{ "output",	required_argument,	NULL, 'o' },
 		{ "output-fd",	required_argument,	NULL, 1 },
+		{ "logfile",	required_argument,	NULL, 'l' },
+		{ "logfile-fd",	required_argument,	NULL, 2 },
 		{ "container",	no_argument,		NULL, 'c' },
 		{ "verbose",	no_argument,		NULL, 'v' },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hvco:";
+	static char optc[] = "hvco:l:";
 
 	/* defaults */
-	args->outputfd = -1;
+	args->outfd = -1;
+	args->logfd = -1;
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, NULL);
@@ -95,8 +102,18 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			args->output = optarg;
 			break;
 		case 1:
-			args->outputfd = str2num(optarg);
-			if (args->outputfd < 0) {
+			args->outfd = str2num(optarg);
+			if (args->outfd < 0) {
+				printf("checkpoint: invalid file descriptor\n");
+				exit(1);
+			}
+			break;
+		case 'l':
+			args->logfile = optarg;
+			break;
+		case 2:
+			args->logfd = str2num(optarg);
+			if (args->logfd < 0) {
 				printf("checkpoint: invalid file descriptor\n");
 				exit(1);
 			}
@@ -112,8 +129,12 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		}
 	}
 
-	if (args->output && args->outputfd >= 0) {
+	if (args->output && args->outfd >= 0) {
 		printf("Invalid used of both -o/--output and --output-fd\n");
+		exit(1);
+	}
+	if (args->logfile && args->logfd >= 0) {
+		printf("Invalid used of both -l/--logfile and --logfile-fd\n");
 		exit(1);
 	}
 }
@@ -143,24 +164,33 @@ int main(int argc, char *argv[])
 
 	/* output file */
 	if (args.output) {
-		args.outputfd = open(args.output, O_RDWR | O_CREAT, 0);
-		if (args.outputfd < 0) {
+		args.outfd = open(args.output,
+				     O_RDWR | O_CREAT | O_EXCL, 0644);
+		if (args.outfd < 0) {
 			perror("open output file");
 			exit(1);
 		}
 	}
 
 	/* output file descriptor (default: stdout) */
-	if (args.outputfd >= 0) {
-		if (dup2(args.outputfd, STDOUT_FILENO) < 0) {
-			perror("dup2 output file");
+	if (args.outfd < 0)
+		args.outfd = STDOUT_FILENO;
+
+	/* (optional) log file */
+	if (args.logfile) {
+		args.logfd = open(args.logfile,
+				  O_RDWR | O_CREAT | O_EXCL, 0644);
+		if (args.logfd < 0) {
+			perror("open log file");
 			exit(1);
 		}
-		if (args.outputfd != STDOUT_FILENO)
-			close(args.outputfd);
 	}
 
-	ret = checkpoint(pid, STDOUT_FILENO, flags);
+	/* output file descriptor (default: none) */
+	if (args.logfd < 0)
+		args.logfd = CHECKPOINT_FD_NONE;
+
+	ret = checkpoint(pid, args.outfd, flags, args.logfd);
 
 	if (ret < 0) {
 		perror("checkpoint");

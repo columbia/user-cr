@@ -20,7 +20,7 @@
 
 inline static int checkpoint(pid_t pid, int fd, unsigned long flags)
 {
-	return syscall(__NR_checkpoint, pid, fd, flags);
+	return syscall(__NR_checkpoint, pid, fd, flags, CHECKPOINT_FD_NONE);
 }
 
 #define OUTFILE  "/tmp/cr-self.out"

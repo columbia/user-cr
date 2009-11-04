@@ -22,7 +22,7 @@
 
 inline static int restart(pid_t pid, int fd, unsigned long flags)
 {
-	return syscall(__NR_restart, pid, fd, flags);
+	return syscall(__NR_restart, pid, fd, flags, CHECKPOINT_FD_NONE);
 }
 
 int main(int argc, char *argv[])
