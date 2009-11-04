@@ -144,7 +144,7 @@ echo '#endif /* _CHECKPOINT_CKPT_HDR_H_ */' >> "${OUTPUT_INCLUDES}/linux/checkpo
 # We use ARCH_COND to break up architecture-specific sections of the header.
 #
 ARCH_COND='#if'
-REGEX='[ \t]*#[ \t]*define[ \t]+__NR_(checkpoint|restart|clone_with_pids)[ \t]+[0-9]+'
+REGEX='[[:space:]]*#[[:space:]]*define[[:space:]]*__NR_(checkpoint|restart|clone_with_pids)[[:space:]]+[0-9]+'
 
 cat - <<-EOFOE
 /*
@@ -161,13 +161,12 @@ find "${KERNELSRC}/arch" -name 'unistd*.h' -print | sort | \
 while read UNISTDH ; do
 	[ -n "${UNISTDH}" ] || continue
 	grep -q -E "${REGEX}" "${UNISTDH}" || continue
-
 	KARCH=$(echo "${UNISTDH}" | sed -e 's|.*/arch/\([^/]\+\)/.*|\1|')
 	WORDBITS=$(basename "${UNISTDH}" | sed -e 's/unistd_*\([[:digit:]]\+\)\.h/\1/')
 	CPPARCH="$(karch_to_cpparch "${KARCH}" "${WORDBITS}")"
 	echo -e "${ARCH_COND} __${CPPARCH}__\\n"
 	grep -E "${REGEX}" "${UNISTDH}" | \
-	sed -e 's/^[ \t]*#[ \t]*define[ \t]\+__NR_\([^ \t]\+\)[ \t]\+\([^ \t]\+\).*$/#\tifndef __NR_\1\n#\t\tdefine __NR_\1 \2\n#\tendif\n/'
+	sed -e 's/^[ \t]*#[ \t]*define[ \t]*__NR_\([^ \t]\+\)[ \t]\+\([^ \t]\+\).*$/#\tifndef __NR_\1\n#\t\tdefine __NR_\1 \2\n#\tendif\n/'
 	ARCH_COND='#elif'
 done
 
