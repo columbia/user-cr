@@ -114,6 +114,8 @@ enum {
 #define CKPT_HDR_TTY CKPT_HDR_TTY
 	CKPT_HDR_TTY_LDISC,
 #define CKPT_HDR_TTY_LDISC CKPT_HDR_TTY_LDISC
+	CKPT_HDR_EPOLL_ITEMS,  /* must be after file-table */
+#define CKPT_HDR_EPOLL_ITEMS CKPT_HDR_EPOLL_ITEMS
 
 	CKPT_HDR_MM = 401,
 #define CKPT_HDR_MM CKPT_HDR_MM
@@ -457,6 +459,10 @@ enum file_type {
 #define CKPT_FILE_SOCKET CKPT_FILE_SOCKET
 	CKPT_FILE_TTY,
 #define CKPT_FILE_TTY CKPT_FILE_TTY
+	CKPT_FILE_EPOLL,
+#define CKPT_FILE_EPOLL CKPT_FILE_EPOLL
+	CKPT_FILE_EVENTFD,
+#define CKPT_FILE_EVENTFD CKPT_FILE_EVENTFD
 	CKPT_FILE_MAX
 #define CKPT_FILE_MAX CKPT_FILE_MAX
 };
@@ -479,6 +485,12 @@ struct ckpt_hdr_file_generic {
 struct ckpt_hdr_file_pipe {
 	struct ckpt_hdr_file common;
 	__s32 pipe_objref;
+} __attribute__((aligned(8)));
+
+struct ckpt_hdr_file_eventfd {
+	struct ckpt_hdr_file common;
+	__u64 count;
+	__u32 flags;
 } __attribute__((aligned(8)));
 
 /* socket */
@@ -559,6 +571,20 @@ struct ckpt_hdr_socket_inet {
 struct ckpt_hdr_file_socket {
 	struct ckpt_hdr_file common;
 	__s32 sock_objref;
+} __attribute__((aligned(8)));
+
+struct ckpt_hdr_eventpoll_items {
+	struct ckpt_hdr h;
+	__s32  epfile_objref;
+	__u32  num_items;
+} __attribute__((aligned(8)));
+
+/* Contained in a CKPT_HDR_BUFFER following the ckpt_hdr_eventpoll_items */
+struct ckpt_eventpoll_item {
+	__u64 data;
+	__u32 fd;
+	__s32 file_objref;
+	__u32 events;
 } __attribute__((aligned(8)));
 
 /* memory layout */

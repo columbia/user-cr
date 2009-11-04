@@ -24,6 +24,9 @@
 #define RESTART_FROZEN 0x2
 #define RESTART_GHOST 0x4
 
+/* misc user visible */
+#define CHECKPOINT_FD_NONE -1
+
 
 #if __powerpc__
 
