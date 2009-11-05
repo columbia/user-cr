@@ -2029,17 +2029,21 @@ static int ckpt_adjust_pids(struct ckpt_ctx *ctx)
 			if (ctx->pids_arr[m].vpgid == swap.old)
 				ctx->copy_arr[m].vpgid = swap.new;
 		}
+	}
 
-		/*
-		 * If the task's {sid,pgid} was zeroed out (inside
-		 * ckpt_init_tree) then substitute the coordinator's
-		 * sid for it now. (This should leave no more 0's in
-		 * restart of a subtree-checkpoint).
-		 */
-		if (ctx->tasks_arr[n].flags & TASK_ZERO_SID)
-			ctx->pids_arr[m].vsid = coord_sid;
-		if (ctx->tasks_arr[n].flags & TASK_ZERO_PGID)
-			ctx->pids_arr[m].vpgid = coord_sid;
+	/*
+	 * If a task's {sid,pgid} was zeroed out (in ckpt_init_tree)
+	 * then substitute the coordinator's sid for it now. (This
+	 * should leave no more 0's in restart of subtree-checkpoint).
+	 *
+	 * NOTE: thanks to the construction of tasks_arr[], the first
+	 * ctx->pid_nr entries in both arrays match (the same pids).
+	 */
+	for (m = 0; m < ctx->pids_nr; m++) {
+		if (ctx->tasks_arr[m].flags & TASK_ZERO_SID)
+			ctx->copy_arr[m].vsid = coord_sid;
+		if (ctx->tasks_arr[m].flags & TASK_ZERO_PGID)
+			ctx->copy_arr[m].vpgid = coord_sid;
 	}
 
 	memcpy(ctx->pids_arr, ctx->copy_arr, len);
