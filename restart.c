@@ -530,7 +530,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 #endif
 
 	if (args->self &&
-	    (args->pids || args->pidns || args->no_pidns || args->wait ||
+	    (args->pids || args->pidns || args->no_pidns ||
 	     args->show_status || args->copy_status || args->freezer)) {
 		printf("Invalid mix of --self with multiprocess options\n");
 		exit(1);
@@ -1177,7 +1177,7 @@ static inline int ckpt_valid_pid(pid_t pid, int pidns, char *which, int i)
 		return 0;
 	}
 	if (!pidns && pid == 0) {
-		ckpt_err("Zero %s (for task#%d) requires pid-ns\n", which, i);
+		ckpt_err("Zero %s (task#%d) requires pid-ns\n", which, i + 1);
 		return 0;
 	}
 	return 1;
