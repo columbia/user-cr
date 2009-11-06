@@ -1107,9 +1107,10 @@ static int ckpt_build_tree(struct ckpt_ctx *ctx)
 	}
 
 #ifdef CHECKPOINT_DEBUG
+	ckpt_dbg("====== TASKS\n");
 	for (i = 0; i < ctx->tasks_nr; i++) {
 		task = &ctx->tasks_arr[i];
-		ckpt_dbg("[%d] pid %d ppid %d sid %d creator %d",
+		ckpt_dbg("\t[%d] pid %d ppid %d sid %d creator %d",
 			 i, task->pid, task->ppid, task->sid,
 			 task->creator->pid);
 		if (task->next_sib)
@@ -1127,6 +1128,7 @@ static int ckpt_build_tree(struct ckpt_ctx *ctx)
 		       (task->flags & TASK_DEAD) ? 'D' : ' ');
 		ckpt_dbg_cont("\n");
 	}
+	ckpt_dbg("............\n");
 #endif
 
 	return 0;
@@ -2005,6 +2007,17 @@ static int ckpt_adjust_pids(struct ckpt_ctx *ctx)
 
 	len = sizeof(struct ckpt_pids) * ctx->pids_nr;
 
+#ifdef CHECKPOINT_DEBUG
+	ckpt_dbg("====== PIDS ARRAY\n");
+	for (m = 0; m < ctx->pids_nr; m++) {
+		struct ckpt_pids *p;
+		p = &ctx->pids_arr[m];
+		ckpt_dbg("[%d] pid %d ppid %d sid %d pgid %d\n",
+			 m, p->vpid, p->vppid, p->vsid, p->vpgid);
+	}
+	ckpt_dbg("............\n");
+#endif
+
 	memcpy(ctx->copy_arr, ctx->pids_arr, len);
 
 	/* read in 'pid_swap' data and adjust ctx->pids_arr */
@@ -2049,6 +2062,20 @@ static int ckpt_adjust_pids(struct ckpt_ctx *ctx)
 	}
 
 	memcpy(ctx->pids_arr, ctx->copy_arr, len);
+
+#ifdef CHECKPOINT_DEBUG
+	if (!ctx->args->pids) {
+		ckpt_dbg("====== PIDS ARRAY (swaped)\n");
+		for (m = 0; m < ctx->pids_nr; m++) {
+			struct ckpt_pids *p;
+			p = &ctx->pids_arr[m];
+			ckpt_dbg("[%d] pid %d ppid %d sid %d pgid %d\n",
+				 m, p->vpid, p->vppid, p->vsid, p->vpgid);
+		}
+		ckpt_dbg("............\n");
+	}
+#endif
+
 	close(ctx->pipe_in);
 	return 0;
 }
