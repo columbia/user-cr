@@ -942,10 +942,12 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 	ckpt_dbg("forking coordinator in new pidns\n");
 
 	/*
-	 * We won't wait for (collect) the coordinator, so we use a
-	 * pipe instead for the coordinator to report success/failure.
+	 * The coordinator report restart susccess/failure via pipe.
+	 * (It cannot use return value, because the in the default
+	 * --wait --copy-status case it is already used to report the
+	 * root-task's return value).
 	 */
-	if (!ctx->args->wait && pipe(ctx->pipe_coord)) {
+	if (pipe(ctx->pipe_coord) < 0) {
 		perror("pipe");
 		return -1;
 	}
@@ -981,10 +983,7 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 		return -1;
 
 	ctx->args->copy_status = copy;
-	if (ctx->args->wait)
-		return ckpt_collect_child(ctx);
-	else
-		return ckpt_coordinator_status(ctx);
+	return ckpt_coordinator_status(ctx);
 }
 #else
 static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
@@ -1040,13 +1039,13 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 		 * around and be reaper until all tasks are gone.
 		 * Otherwise, container will die as soon as we exit.
 		 */
-		if (!ctx->args->wait) {
-			/* report status because parent won't wait for us */
-			if (write(ctx->pipe_coord[1], &ret, sizeof(ret)) < 0) {
-				perror("failed to report status");
-				exit(1);
-			}
+
+		/* Report success/failure to the parent */
+		if (write(ctx->pipe_coord[1], &ret, sizeof(ret)) < 0) {
+			perror("failed to report status");
+			exit(1);
 		}
+
 		ret = ckpt_pretend_reaper(ctx);
 	} else if (ctx->args->wait) {
 		ret = ckpt_collect_child(ctx);
