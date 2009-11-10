@@ -250,9 +250,6 @@ struct task zero_task;
 #define TASK_NEWPID	0x20	/* starts a new pid namespace */
 #define TASK_DEAD	0x40	/* dead task (dummy) */
 
-#define TASK_ZERO_SID	0x100	/* sid was temporarily zeroed */
-#define TASK_ZERO_PGID	0x200	/* pgid was temporarily zeroed */
-
 struct ckpt_ctx {
 	pid_t root_pid;
 	int pipe_in;
@@ -1239,6 +1236,41 @@ static int ckpt_valid_pid(struct ckpt_ctx *ctx, pid_t pid, char *which, int i)
 	return 1;
 }
 
+static int ckpt_alloc_pid(struct ckpt_ctx *ctx)
+{
+	int n = 0;
+
+	/*
+	 * allocate an unused pid for the placeholder
+	 * (this will become inefficient if pid-space is exhausted)
+	 */
+	do {
+		if (ctx->tasks_pid == INT_MAX)
+			ctx->tasks_pid = 2;
+		else
+			ctx->tasks_pid++;
+
+		if (n++ == INT_MAX) {	/* ohhh... */
+			ckpt_err("pid namsepace exhausted");
+			return -1;
+		}
+	} while (hash_lookup(ctx, ctx->tasks_pid));
+
+	return ctx->tasks_pid;
+}
+
+static int ckpt_zero_pid(struct ckpt_ctx *ctx)
+{
+	pid_t pid;
+
+	pid = ckpt_alloc_pid(ctx);
+	if (pid < 0)
+		return -1;
+	if (ckpt_setup_task(ctx, pid, ctx->pids_arr[0].vpid) < 0)
+		return -1;
+	return pid;
+}
+
 static int ckpt_init_tree(struct ckpt_ctx *ctx)
 {
 	struct ckpt_pids *pids_arr = ctx->pids_arr;
@@ -1246,6 +1278,7 @@ static int ckpt_init_tree(struct ckpt_ctx *ctx)
 	struct task *task;
 	pid_t root_pid;
 	pid_t root_sid;
+	pid_t zero_pid = 0;
 	int i;
 
 	root_pid = pids_arr[0].vpid;
@@ -1257,16 +1290,20 @@ static int ckpt_init_tree(struct ckpt_ctx *ctx)
 	 * same as root_pid or 0), and root_sid was inherited from an
 	 * ancestor of that subtree.
 	 *
-	 * So we make the root-task also inherit sid from its ancestor
-	 * (== coordinator), whatever 'restart' task currently has.
-	 * For that, we force the root-task's sid and all references
-	 * to it from other tasks (via sid and pgid), to 0. Later, the
-	 * feeder will substitute the cooridnator's sid for them.
+	 * If we restart with --pidns, make the root-task also inherit
+	 * sid from its ancestor (== coordinator), whatever 'restart'
+	 * task currently has.  For that, we force the root-task's sid
+	 * and all references to it from other tasks (via sid and
+	 * pgid), to 0. Later, the feeder will substitute the
+	 * cooridnator's sid for them.
 	 *
 	 * (Note that this still works even if the coordinator's sid
 	 * is "used" by a restarting task: a new-pidns restart will
 	 * fail because the pid is in use, and in an old-pidns restart
 	 * the task will be assigned a new pid anyway).
+	 *
+	 * If we restart with --no-pidns, we'll add a ghost task below
+	 * whose pid will be used instead of these zeroed entried.
 	 */
 
 	/* forcing root_sid to -1, will make comparisons below fail */
@@ -1288,15 +1325,10 @@ static int ckpt_init_tree(struct ckpt_ctx *ctx)
 		else if (!ckpt_valid_pid(ctx, pids_arr[i].vpgid, "pgid", i))
 			return -1;
 
-		/* zero references to root_sid (root_sid != root_pid) */
-		if (pids_arr[i].vsid == root_sid) {
-			task->flags |= TASK_ZERO_SID;
+		if (pids_arr[i].vsid == root_sid)
 			pids_arr[i].vsid = 0;
-		}
-		if (pids_arr[i].vpgid == root_sid) {
-			task->flags |= TASK_ZERO_PGID;
+		if (pids_arr[i].vpgid == root_sid)
 			pids_arr[i].vpgid = 0;
-		}
 
 		task->pid = pids_arr[i].vpid;
 		task->ppid = pids_arr[i].vppid;
@@ -1324,6 +1356,9 @@ static int ckpt_init_tree(struct ckpt_ctx *ctx)
 
 		sid = pids_arr[i].vsid;
 
+		/* Remember if we find any vsid/vpgid - see below */
+		if (pids_arr[i].vsid == 0 || pids_arr[i].vpgid == 0)
+			zero_pid = 1;
 		/*
 		 * An unaccounted-for sid belongs to a task that was a
 		 * session leader and died. We can safe set its parent
@@ -1358,6 +1393,27 @@ static int ckpt_init_tree(struct ckpt_ctx *ctx)
 		 */
 		if (ckpt_setup_task(ctx, pids_arr[i].vpgid, sid) < 0)
 			return -1;
+	}
+
+	/*
+	 * Zero sid/pgid is disallowed in --no-pidns mode. If there
+	 * were any, we invent a new ghost-zero task and substitute
+	 * its pid for those any sid/pgid.
+	 */
+	if (zero_pid && !ctx->args->pidns) {
+		zero_pid = ckpt_zero_pid(ctx);
+		if (zero_pid < 0)
+			return -1;
+		for (i = 0; i < pids_nr; i++) {
+			if (pids_arr[i].vsid == 0) {
+				pids_arr[i].vsid = zero_pid;
+				pids_arr[i].vppid = zero_pid;
+			}
+			if (pids_arr[i].vpgid == 0) {
+				pids_arr[i].vpgid = zero_pid;
+				pids_arr[i].vppid = zero_pid;
+			}
+		}
 	}
 
 	/* mark root task(s), and set its "creator" to be zero_task */
@@ -1534,7 +1590,7 @@ static int ckpt_placeholder_task(struct ckpt_ctx *ctx, struct task *task)
 {
 	struct task *session = hash_lookup(ctx, task->sid);
 	struct task *holder = &ctx->tasks_arr[ctx->tasks_nr++];
-	int n = 0;
+	pid_t pid;
 
 	if (ctx->tasks_nr > ctx->tasks_max) {
 		/* shouldn't happen, beacuse we prepared enough */
@@ -1542,27 +1598,15 @@ static int ckpt_placeholder_task(struct ckpt_ctx *ctx, struct task *task)
 		return -1;
 	}
 
-	/*
-	 * allocate an unused pid for the placeholder
-	 * (this will become inefficient if pid-space is exhausted)
-	 */
-	do {
-		if (ctx->tasks_pid == INT_MAX)
-			ctx->tasks_pid = 2;
-		else
-			ctx->tasks_pid++;
-
-		if (n++ == INT_MAX) {	/* ohhh... */
-			ckpt_err("pid namsepace exhausted");
-			return -1;
-		}
-	} while (hash_lookup(ctx, ctx->tasks_pid));
+	pid = ckpt_alloc_pid(ctx);
+	if (pid < 0)
+		return -1;
 
 	holder->flags = TASK_DEAD;
 
-	holder->pid = ctx->tasks_pid;
+	holder->pid = pid;
 	holder->ppid = ckpt_init_task(ctx)->pid;
-	holder->tgid = holder->pid;
+	holder->tgid = pid;
 	holder->sid = task->sid;
 
 	holder->children = NULL;
@@ -2094,23 +2138,6 @@ static int ckpt_adjust_pids(struct ckpt_ctx *ctx)
 				ctx->copy_arr[m].vsid = swap.new;
 			if (ctx->pids_arr[m].vpgid == swap.old)
 				ctx->copy_arr[m].vpgid = swap.new;
-		}
-	}
-
-	if (!ctx->args->pidns) {
-		/*
-		 * If a task's {sid,pgid} was zeroed out (in ckpt_init_tree)
-		 * then substitute the coordinator's sid for it now. (This
-		 * should leave no more 0's in restart of subtree-checkpoint).
-		 *
-		 * NOTE: thanks to the construction of tasks_arr[], the first
-		 * ctx->pid_nr entries in both arrays match (the same pids).
-		 */
-		for (m = 0; m < ctx->pids_nr; m++) {
-			if (ctx->tasks_arr[m].flags & TASK_ZERO_SID)
-				ctx->copy_arr[m].vsid = coord_sid;
-			if (ctx->tasks_arr[m].flags & TASK_ZERO_PGID)
-				ctx->copy_arr[m].vpgid = coord_sid;
 		}
 	}
 
