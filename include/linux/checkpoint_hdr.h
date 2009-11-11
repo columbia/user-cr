@@ -16,10 +16,18 @@
 
 #include <sys/types.h>
 #include <linux/types.h>
-
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <netinet/in.h>
+
+/*
+ * /usr/include/linux/security.h is not exported to userspace, so
+ * we need this value here for userspace restart.c to read.
+ *
+ * CHECKPOINT_LSM_NAME_MAX should be SECURITY_NAME_MAX
+ * security_may_restart() has a BUILD_BUG_ON to enforce that.
+ */
+#define CHECKPOINT_LSM_NAME_MAX 10
 
 /*
  * To maintain compatibility between 32-bit and 64-bit architecture flavors,
@@ -64,6 +72,10 @@ enum {
 #define CKPT_HDR_STRING CKPT_HDR_STRING
 	CKPT_HDR_OBJREF,
 #define CKPT_HDR_OBJREF CKPT_HDR_OBJREF
+	CKPT_HDR_LSM_INFO,
+#define CKPT_HDR_LSM_INFO CKPT_HDR_LSM_INFO
+	CKPT_HDR_SECURITY,
+#define CKPT_HDR_SECURITY CKPT_HDR_SECURITY
 
 	CKPT_HDR_TREE = 101,
 #define CKPT_HDR_TREE CKPT_HDR_TREE
@@ -218,6 +230,10 @@ enum obj_type {
 #define CKPT_OBJ_SOCK CKPT_OBJ_SOCK
 	CKPT_OBJ_TTY,
 #define CKPT_OBJ_TTY CKPT_OBJ_TTY
+	CKPT_OBJ_SECURITY_PTR,
+#define CKPT_OBJ_SECURITY_PTR CKPT_OBJ_SECURITY_PTR
+	CKPT_OBJ_SECURITY,
+#define CKPT_OBJ_SECURITY CKPT_OBJ_SECURITY
 	CKPT_OBJ_MAX
 #define CKPT_OBJ_MAX CKPT_OBJ_MAX
 };
@@ -243,11 +259,6 @@ struct ckpt_const {
 	__u16 n_tty_buf_size;
 	__u16 tty_termios_ncc;
 } __attribute__((aligned(8)));
-
-/* container configuration section header */
-struct ckpt_hdr_container {
-	struct ckpt_hdr h;
-};
 
 /* checkpoint image header */
 struct ckpt_hdr_header {
@@ -279,6 +290,16 @@ struct ckpt_hdr_tail {
 	struct ckpt_hdr h;
 	__u64 magic;
 } __attribute__((aligned(8)));
+
+/* container configuration section header */
+struct ckpt_hdr_container {
+	struct ckpt_hdr h;
+	/*
+	 * the header is followed by the string:
+	 *   char lsm_name[SECURITY_NAME_MAX + 1]
+	 * plus the CKPT_HDR_LSM_INFO section
+	 */
+} __attribute__((aligned(8)));;
 
 /* task tree */
 struct ckpt_hdr_tree {
@@ -337,6 +358,7 @@ struct ckpt_hdr_cred {
 	__u32 gid, sgid, egid, fsgid;
 	__s32 user_ref;
 	__s32 groupinfo_ref;
+	__s32 sec_ref;
 	struct ckpt_capabilities cap_s;
 } __attribute__((aligned(8)));
 
@@ -349,6 +371,15 @@ struct ckpt_hdr_groupinfo {
 	__u32 groups[0];
 } __attribute__((aligned(8)));
 
+struct ckpt_hdr_lsm {
+	struct ckpt_hdr h;
+	__s32 ptrref;
+	__u8 sectype;
+	/*
+	 * This is followed by a string of size len+1,
+	 * null-terminated
+	 */
+} __attribute__((aligned(8)));
 /*
  * todo - keyrings and LSM
  * These may be better done with userspace help though
@@ -420,12 +451,16 @@ enum restart_block_type {
 #define CKPT_RESTART_BLOCK_NONE CKPT_RESTART_BLOCK_NONE
 	CKPT_RESTART_BLOCK_HRTIMER_NANOSLEEP,
 #define CKPT_RESTART_BLOCK_HRTIMER_NANOSLEEP CKPT_RESTART_BLOCK_HRTIMER_NANOSLEEP
+
 	CKPT_RESTART_BLOCK_POSIX_CPU_NANOSLEEP,
 #define CKPT_RESTART_BLOCK_POSIX_CPU_NANOSLEEP CKPT_RESTART_BLOCK_POSIX_CPU_NANOSLEEP
+
 	CKPT_RESTART_BLOCK_COMPAT_NANOSLEEP,
 #define CKPT_RESTART_BLOCK_COMPAT_NANOSLEEP CKPT_RESTART_BLOCK_COMPAT_NANOSLEEP
+
 	CKPT_RESTART_BLOCK_COMPAT_CLOCK_NANOSLEEP,
 #define CKPT_RESTART_BLOCK_COMPAT_CLOCK_NANOSLEEP CKPT_RESTART_BLOCK_COMPAT_CLOCK_NANOSLEEP
+
 	CKPT_RESTART_BLOCK_POLL,
 #define CKPT_RESTART_BLOCK_POLL CKPT_RESTART_BLOCK_POLL
 	CKPT_RESTART_BLOCK_FUTEX,
@@ -476,6 +511,7 @@ struct ckpt_hdr_file {
 	__s32 f_credref;
 	__u64 f_pos;
 	__u64 f_version;
+	__s32 f_secref;
 } __attribute__((aligned(8)));
 
 struct ckpt_hdr_file_generic {
@@ -621,7 +657,7 @@ enum vma_type {
 #define CKPT_VMA_SHM_IPC CKPT_VMA_SHM_IPC
 	CKPT_VMA_SHM_IPC_SKIP,	/* shared sysvipc (skip contents) */
 #define CKPT_VMA_SHM_IPC_SKIP CKPT_VMA_SHM_IPC_SKIP
-	CKPT_VMA_MAX
+	CKPT_VMA_MAX,
 #define CKPT_VMA_MAX CKPT_VMA_MAX
 };
 
@@ -748,6 +784,7 @@ struct ckpt_hdr_ipc_perms {
 	__u32 mode;
 	__u32 _padding;
 	__u64 seq;
+	__s32 sec_ref;
 } __attribute__((aligned(8)));
 
 struct ckpt_hdr_ipc_shm {
@@ -781,6 +818,7 @@ struct ckpt_hdr_ipc_msg_msg {
 	struct ckpt_hdr h;
 	__s32 m_type;
 	__u32 m_ts;
+	__s32 sec_ref;
 } __attribute__((aligned(8)));
 
 struct ckpt_hdr_ipc_sem {

@@ -71,6 +71,7 @@ static char usage_str[] =
 "     --show-status      show exit status of root task (implies -w)\n"
 "     --copy-status      imitate exit status of root task (implies -w)\n"
 "  -W,--no-wait          do not wait for root task to terminate\n"
+"  -k,--keeplsm          try to recreate original LSM labels on all objects\n"
 "  -F,--freezer=CGROUP   freeze tasks in freezer group CGROUP on success\n"
 "  -i,--input=FILE       read data from FILE instead of standard input\n"
 "     --input-fd=FD      read data from file descriptor FD (instead of stdin)\n"
@@ -362,6 +363,7 @@ struct args {
 	int logfd;
 	long warn;
 	long fail;
+	int keep_lsm;
 };
 
 #define CKPT_COND_PIDZERO  0x1
@@ -426,6 +428,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "self",	no_argument,		NULL, 6},
 		{ "signal",	required_argument,	NULL, 4 },
 		{ "inspect",	no_argument,		NULL, 5 },
+		{ "keeplsm",	no_argument,		NULL, 'k' },
 		{ "input",	required_argument,	NULL, 'i' },
 		{ "input-fd",	required_argument,	NULL, 7 },
 		{ "logfile",	required_argument,	NULL, 'l' },
@@ -442,7 +445,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "fail-pidzero",	no_argument,	NULL, 10 },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hdvpPwWF:r:i:l:";
+	static char optc[] = "hdvkpPwWF:r:i:l:";
 
 	int optind;
 	int sig;
@@ -519,6 +522,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			break;
 		case 'W':
 			args->wait = 0;
+			break;
+		case 'k':
+			args->keep_lsm = 1;
 			break;
 		case 1:  /* --show-status */
 			args->wait = 1;
@@ -1064,6 +1070,8 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 
 	if (ctx->args->freezer)
 		flags |= RESTART_FROZEN;
+	if (ctx->args->keep_lsm)
+		flags |= RESTART_KEEP_LSM;
 
 	ret = restart(root_pid, STDIN_FILENO, flags, ctx->args->logfd);
 
@@ -2346,9 +2354,22 @@ static int ckpt_read_header_arch(struct ckpt_ctx *ctx)
 static int ckpt_read_container(struct ckpt_ctx *ctx)
 {
 	struct ckpt_hdr_container *h;
+	char *ptr;
+	int ret;
 
 	h = (struct ckpt_hdr_container *) ctx->container;
-	return ckpt_read_obj_type(ctx, h, sizeof(*h), CKPT_HDR_CONTAINER);
+	ret = ckpt_read_obj_type(ctx, h, sizeof(*h), CKPT_HDR_CONTAINER);
+	if (ret < 0)
+		return ret;
+
+	ptr = (char *) h;
+	ptr += ((struct ckpt_hdr *) ptr)->len;
+	ret = ckpt_read_obj_buffer(ctx, ptr, CHECKPOINT_LSM_NAME_MAX + 1);
+	if (ret < 0)
+		return ret;
+
+	ptr += ((struct ckpt_hdr *) ptr)->len;
+	return ckpt_read_obj_type(ctx, ptr, 200, CKPT_HDR_LSM_INFO);
 }
 
 static int ckpt_read_tree(struct ckpt_ctx *ctx)
@@ -2426,9 +2447,22 @@ static int ckpt_write_header_arch(struct ckpt_ctx *ctx)
 static int ckpt_write_container(struct ckpt_ctx *ctx)
 {
 	char *ptr;
+	int ret;
 
 	ptr = (char *) ctx->container;
 	/* write the container info section */
+	ret = ckpt_write_obj(ctx, (struct ckpt_hdr *) ptr);
+	if (ret < 0)
+		return ret;
+
+	/* write the lsm name buffer */
+	ptr += ((struct ckpt_hdr *) ptr)->len;
+	ret = ckpt_write_obj(ctx, (struct ckpt_hdr *) ptr);
+	if (ret < 0)
+		return ret;
+
+	/* write the lsm policy section */
+	ptr += ((struct ckpt_hdr *) ptr)->len;
 	return ckpt_write_obj(ctx, (struct ckpt_hdr *) ptr);
 }
 

@@ -14,7 +14,7 @@
  *  distribution for more details.
  */
 
-#define CHECKPOINT_VERSION 3
+#define CHECKPOINT_VERSION 4
 
 /* checkpoint user flags */
 #define CHECKPOINT_SUBTREE 0x1
@@ -23,6 +23,7 @@
 #define RESTART_TASKSELF 0x1
 #define RESTART_FROZEN 0x2
 #define RESTART_GHOST 0x4
+#define RESTART_KEEP_LSM 0x8
 
 /* misc user visible */
 #define CHECKPOINT_FD_NONE -1
