@@ -81,3 +81,57 @@ int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
 }
 
 #endif
+
+#include "eclone.h"
+
+#ifndef __NR_eclone
+#define __NR_eclone 337
+#endif
+
+int eclone(int (*fn)(void *), void *fn_arg, int clone_flags_low,
+	   struct clone_args *clone_args, pid_t *pids)
+{
+	struct clone_args my_args;
+	long retval;
+	void **newstack;
+
+	if (clone_args->child_stack) {
+		/*
+		 * Set up the stack for child:
+		 *  - fn_arg will be the argument for the child function
+		 *  - the fn pointer will be loaded into ebx after the clone
+		 */
+		newstack = (void **)(unsigned long)(clone_args->child_stack +
+					    clone_args->child_stack_size);
+		*--newstack = fn_arg;
+		*--newstack = fn;
+	} else
+		newstack = (void **)0;
+
+	my_args = *clone_args;
+	my_args.child_stack = (unsigned long)newstack;
+	my_args.child_stack_size = 0;
+
+	__asm__ __volatile__(
+		"int $0x80\n\t"	       /* Linux/i386 system call */
+		"testl %0,%0\n\t"      /* check return value */
+		"jne 1f\n\t"	       /* jump if parent */
+		"popl %%ebx\n\t"       /* get subthread function */
+		"call *%%ebx\n\t"      /* start subthread function */
+		"movl %2,%0\n\t"
+		"int $0x80\n"	       /* exit system call: exit subthread */
+		"1:\n\t"
+		:"=a" (retval)
+		:"0" (__NR_eclone), "i" (__NR_exit),
+		 "b" (clone_flags_low),	/* flags -> 1st (ebx) */
+		 "c" (&my_args),	/* clone_args -> 2nd (ecx) */
+		 "d" (sizeof(my_args)),	/* args_size -> 3rd (edx) */
+		 "D" (pids)		/* pids -> 4th (edi) */
+		);
+
+	if (retval < 0) {
+		errno = -retval;
+		retval = -1;
+	}
+	return retval;
+}
