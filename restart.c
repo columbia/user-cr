@@ -35,25 +35,7 @@
 #include <linux/checkpoint.h>
 #include <linux/checkpoint_hdr.h>
 
-
-/* this really belongs to some kernel header ! */
-struct pid_set {
-	int num_pids;
-	pid_t *pids;
-};
-
-/* (until it's supported by libc) from clone_ARCH.c */
-#if defined(__NR_clone_with_pids) && defined(ARCH_HAS_CLONE_WITH_PID)
-extern int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
-			   struct pid_set *target_pids, void *arg);
-#else
-static int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
-			   struct pid_set *target_pids, void *arg)
-{
-	return clone(fn, child_stack, flags, arg);
-}
-#endif
-
+#include "eclone.h"
 
 static char usage_str[] =
 "usage: restart [opts]\n"
@@ -90,8 +72,7 @@ static char usage_str[] =
 /*
  * By default, 'restart' creates a new pid namespace in which the
  * restart takes place, using the original pids from the time of the
- * checkpoint. This requires that CLONE_NEWPID and clone_with_pids()
- * be enabled.
+ * checkpoint. This requires that CLONE_NEWPID and eclone() be enabled.
  *
  * Restart can also occur in the current namespace, however pids from
  * the time of the checkpoint may be already in use then. Therefore,
@@ -104,7 +85,7 @@ static char usage_str[] =
  * use "--pids --no-pidns" for a restart in the currnet namespace -
  * 'restart' will attempt to create the new tree with the original pids
  * from the time of the checkpoint, if possible. This requires that
- * clone_with_pids() be enabled.
+ * eclone() be enabled.
  *
  * To re-create the tasks tree in user space, 'restart' reads the
  * header and tree data from the checkpoint image tree. It makes up
@@ -574,7 +555,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	if (args->pidns)
 		args->pids = 1;
 
-#ifndef __NR_clone_with_pids
+#ifndef __NR_eclone
 	if (args->pids) {
 		printf("This version of restart was compiled without "
 		       "support for --pids.\n");
@@ -1899,23 +1880,20 @@ int ckpt_fork_stub(void *data)
 
 static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 {
-	struct pid_set pid_set;
-	char *stack_region;
-	char *stack_start;
+	struct clone_args clone_args;
+	void *stack;
 	unsigned long flags = SIGCHLD;
+	size_t stack_sz = PTHREAD_STACK_MIN;
+	size_t nr_pids = 1;
 	pid_t pid = 0;
 
 	ckpt_dbg("forking child vpid %d flags %#x\n", child->pid, child->flags);
 
-	stack_region = malloc(PTHREAD_STACK_MIN);
-	if (!stack_region) {
+	stack = malloc(stack_sz);
+	if (!stack) {
 		perror("stack malloc");
 		return -1;
 	}
-	stack_start = stack_region + PTHREAD_STACK_MIN - 1;
-
-	pid_set.pids = &pid;
-	pid_set.num_pids = 1;
 
 	if (child->flags & TASK_THREAD) {
 		flags |= CLONE_THREAD | CLONE_SIGHAND | CLONE_VM;
@@ -1940,15 +1918,20 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 	else
 		child->real_parent = _getpid();
 
-	pid = clone_with_pids(ckpt_fork_stub, stack_start, flags, &pid_set, child);
+	memset(&clone_args, 0, sizeof(clone_args));
+	clone_args.child_stack = (unsigned long)stack;
+	clone_args.child_stack_size = stack_sz;
+	clone_args.nr_pids = nr_pids;
+
+	pid = eclone(ckpt_fork_stub, child, flags, &clone_args, &pid);
 	if (pid < 0) {
 		perror("clone");
-		free(stack_region);
+		free(stack);
 		return -1;
 	}
 
 	if (!(child->flags & TASK_THREAD))
-		free(stack_region);
+		free(stack);
 
 	ckpt_dbg("forked child vpid %d (asked %d)\n", pid, child->pid);
 	return pid;
