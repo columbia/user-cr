@@ -20,7 +20,7 @@ CFLAGS += -g $(WARNS) $(CKPT_INCLUDE) $(DEBUG)
 # install dir
 INSTALL_DIR = /bin
 
-PROGS =	checkpoint restart ckptinfo
+PROGS =	checkpoint restart ckptinfo nsexeccwp
 
 # other cleanup
 OTHER = ckptinfo_types.c
@@ -35,15 +35,18 @@ all: $(PROGS)
 # restart needs to be thread-safe
 restart: CFLAGS += -D__REENTRANT -pthread
 
-# clone_with_pids() is architecture specific
+# eclone() is architecture specific
 ifneq ($(SUBARCH),)
 restart: clone_$(SUBARCH).o
-restart: CFLAGS += -DARCH_HAS_CLONE_WITH_PID
+restart: CFLAGS += -DARCH_HAS_ECLONE
+nsexeccwp: clone_$(SUBARCH).o
+nsexeccwp: CFLAGS += -DARCH_HAS_ECLONE
 endif
 
 # on powerpc, need also assembly file
 ifeq ($(SUBARCH),ppc)
 restart: clone_$(SUBARCH)_.o
+nsexeccwp: clone_$(SUBARCH)_.o
 endif
 
 # ckptinfo dependencies
