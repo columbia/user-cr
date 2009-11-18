@@ -11,7 +11,7 @@ int main(int argc, char *argv[])
 {
 	FILE *file;
 	int *addr;
-	float a;
+	float a = 0;
 	pid_t pid;
 	int pipefd[2];
 	int i, ret;
