@@ -56,3 +56,46 @@ int clone_with_pids(int (*fn)(void *), void *child_stack, int flags,
 }
 
 #endif
+
+#include "eclone.h"
+
+extern int __eclone(int (*fn)(void *arg),
+		    void *child_sp,
+		    int flags,
+		    void *fn_arg,
+		    struct clone_args *args,
+		    size_t args_size,
+		    pid_t *pids);
+
+int eclone(int (*fn)(void *), void *fn_arg, int clone_flags_low,
+	   struct clone_args *clone_args, pid_t *pids)
+{
+	struct clone_args my_args;
+	unsigned long child_sp;
+	int newpid;
+
+	if (clone_args->child_stack)
+		child_sp = clone_args->child_stack +
+			clone_args->child_stack_size - 1;
+	else
+		child_sp = 0;
+
+	my_args = *clone_args;
+	my_args.child_stack = child_sp;
+	my_args.child_stack_size = 0;
+
+	newpid = __eclone(fn,
+			  (void *)child_sp,
+			  clone_flags_low,
+			  fn_arg,
+			  &my_args,
+			  sizeof(my_args),
+			  pids);
+
+	if (newpid < 0) {
+		errno = -newpid;
+		newpid = -1;
+	}
+
+	return newpid;
+}
