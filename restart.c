@@ -1020,7 +1020,7 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 {
 	void *stk = NULL;
 	pid_t coord_pid;
-	int copy;
+	int copy, ret;
 
 	ckpt_dbg("forking coordinator in new pidns\n");
 
@@ -1066,7 +1066,13 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 		return -1;
 
 	ctx->args->copy_status = copy;
-	return ckpt_coordinator_status(ctx);
+
+	ret = ckpt_coordinator_status(ctx);
+
+	if (ret == 0 && ctx->args->wait)
+		ret = ckpt_collect_child(ctx);
+
+	return ret;
 }
 #else
 static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
