@@ -20,6 +20,7 @@
 #include <sched.h>
 #include <pthread.h>
 #include <signal.h>
+#include <dirent.h>
 #include <time.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -916,6 +917,36 @@ static int ckpt_collect_child(struct ckpt_ctx *ctx)
 	return ckpt_parse_status(status, mimic, verbose);
 }
 
+static int ckpt_close_files(void)
+{
+	char fdpath[64], *endp;
+        struct dirent *dent;
+        DIR *dirp;
+	int fd;
+
+	/*
+	 * Close all the open files reported in /proc/self/task/TID/fd.
+	 * If that file is unavailable, do it the traditional way...
+	 */
+        snprintf(fdpath, PATH_MAX, "/proc/self/task/%d/fd", _gettid());
+	dirp = opendir(fdpath);
+	if (dirp) {
+		while ((dent = readdir(dirp))) {
+			fd = strtol(dent->d_name, &endp, 10);
+			if (dent->d_name != endp && *endp == '\0')
+				close(fd);
+		}
+		closedir(dirp);
+	} else {
+		struct rlimit rlim;
+		getrlimit(RLIMIT_NOFILE, &rlim);
+		for (fd = 0; fd < rlim.rlim_max; fd++)
+			close(fd);
+	}
+
+	return 0;
+}
+
 static int ckpt_pretend_reaper(struct ckpt_ctx *ctx)
 {
 	int status;
@@ -1088,18 +1119,28 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 	ret = 0;
 
 	if (ctx->args->pidns && ctx->tasks_arr[0].pid != 1) {
-		/*
-		 * If root task isn't container init, we must stay
-		 * around and be reaper until all tasks are gone.
-		 * Otherwise, container will die as soon as we exit.
-		 */
-
 		/* Report success/failure to the parent */
 		if (write(ctx->pipe_coord[1], &ret, sizeof(ret)) < 0) {
 			perror("failed to report status");
 			exit(1);
 		}
 
+		/*
+		 * Close all open files to eliminate dependencies on
+		 * the outside of the container. Else, a subsequent
+		 * container-checkpoint will fail due to leaks. (Skip
+		 * when debugging to keep output fro us visible).
+		 */
+		if (!global_debug) {
+			ckpt_close_files();
+			global_verbose = 0;
+		}
+
+		/*
+		 * If root task isn't container init, we must stay
+		 * around and be reaper until all tasks are gone.
+		 * Otherwise, container will die as soon as we exit.
+		 */
 		ret = ckpt_pretend_reaper(ctx);
 	} else if (ctx->args->wait) {
 		ret = ckpt_collect_child(ctx);
