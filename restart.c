@@ -2126,8 +2126,16 @@ static int ckpt_do_feeder(void *data)
 		ckpt_read_write_inspect(ctx);
 	else
 		ckpt_read_write_blind(ctx);
-		
-	/* all is well: feeder thread is done */
+
+	/* All is well: feeder thread is done.  However, we must
+	 * invoke the exit system call directly. Otherwise, upon
+	 * return from this function, glibc's clone wrapper will call
+	 * _exit, which calls exit_group, which will terminate the
+	 * whole process, which is not what we want.
+	 */
+	syscall(SYS_exit, 0);
+
+	/* not reached */
 	return 0;
 }
 
