@@ -555,12 +555,14 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	if (args->pidns)
 		args->pids = 1;
 
+#if 0   /* Defered until __NR_eclone makes it to standard headers */
 #ifndef __NR_eclone
 	if (args->pids) {
 		printf("This version of restart was compiled without "
 		       "support for --pids.\n");
 		exit(1);
 	}
+#endif
 #endif
 
 	if (args->self &&
@@ -1925,7 +1927,7 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 
 	pid = eclone(ckpt_fork_stub, child, flags, &clone_args, &pid);
 	if (pid < 0) {
-		perror("clone");
+		perror("eclone");
 		free(stack);
 		return -1;
 	}
