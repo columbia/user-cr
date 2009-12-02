@@ -24,6 +24,7 @@
 #define RESTART_FROZEN 0x2
 #define RESTART_GHOST 0x4
 #define RESTART_KEEP_LSM 0x8
+#define RESTART_CONN_RESET 0x10
 
 /* misc user visible */
 #define CHECKPOINT_FD_NONE -1
@@ -32,15 +33,11 @@
 #if __powerpc__
 
 #	ifndef __NR_checkpoint
-#		define __NR_checkpoint 323
+#		define __NR_checkpoint 324
 #	endif
 
 #	ifndef __NR_restart
-#		define __NR_restart 324
-#	endif
-
-#	ifndef __NR_clone_with_pids
-#		define __NR_clone_with_pids 325
+#		define __NR_restart 325
 #	endif
 
 #elif __s390x__
@@ -53,15 +50,7 @@
 #		define __NR_restart 333
 #	endif
 
-#	ifndef __NR_clone_with_pids
-#		define __NR_clone_with_pids 334
-#	endif
-
 #elif __i386__
-
-#	ifndef __NR_clone_with_pids
-#		define __NR_clone_with_pids 337
-#	endif
 
 #	ifndef __NR_checkpoint
 #		define __NR_checkpoint 338

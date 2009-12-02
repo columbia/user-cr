@@ -164,6 +164,8 @@ enum {
 #define CKPT_HDR_SOCKET_QUEUE CKPT_HDR_SOCKET_QUEUE
 	CKPT_HDR_SOCKET_BUFFER,
 #define CKPT_HDR_SOCKET_BUFFER CKPT_HDR_SOCKET_BUFFER
+	CKPT_HDR_SOCKET_FRAG,
+#define CKPT_HDR_SOCKET_FRAG CKPT_HDR_SOCKET_FRAG
 	CKPT_HDR_SOCKET_UNIX,
 #define CKPT_HDR_SOCKET_UNIX CKPT_HDR_SOCKET_UNIX
 	CKPT_HDR_SOCKET_INET,
@@ -578,8 +580,26 @@ struct ckpt_hdr_socket_queue {
 
 struct ckpt_hdr_socket_buffer {
 	struct ckpt_hdr h;
+	__u32 transport_header;
+	__u32 network_header;
+	__u32 mac_header;
+	__u32 lin_len; /* Length of linear data */
+	__u32 frg_len; /* Length of fragment data */
+	__u32 skb_len; /* Length of skb (adjusted) */
+	__u32 hdr_len; /* Length of skipped header */
+	__u32 mac_len;
+	__u32 data_offset; /* Offset of data pointer from head */
 	__s32 sk_objref;
 	__s32 pr_objref;
+	__u16 protocol;
+	__u16 nr_frags;
+	__u8 cb[48];
+};
+
+struct ckpt_hdr_socket_buffer_frag {
+	struct ckpt_hdr h;
+	__u32 size;
+	__u32 offset;
 };
 
 #define CKPT_UNIX_LINKED 1
@@ -598,6 +618,100 @@ struct ckpt_hdr_socket_unix {
 
 struct ckpt_hdr_socket_inet {
 	struct ckpt_hdr h;
+	__u32 daddr;
+	__u32 rcv_saddr;
+	__u32 saddr;
+	__u16 dport;
+	__u16 num;
+	__u16 sport;
+	__s16 uc_ttl;
+	__u16 cmsg_flags;
+
+	struct {
+		__u64 timeout;
+		__u32 ato;
+		__u32 lrcvtime;
+		__u16 last_seg_size;
+		__u16 rcv_mss;
+		__u8 pending;
+		__u8 quick;
+		__u8 pingpong;
+		__u8 blocked;
+	} icsk_ack __attribute__ ((aligned(8)));
+
+	/* FIXME: Skipped opt, tos, multicast, cork settings */
+
+	struct {
+		__u32 rcv_nxt;
+		__u32 copied_seq;
+		__u32 rcv_wup;
+		__u32 snd_nxt;
+		__u32 snd_una;
+		__u32 snd_sml;
+		__u32 rcv_tstamp;
+		__u32 lsndtime;
+
+		__u32 snd_wl1;
+		__u32 snd_wnd;
+		__u32 max_window;
+		__u32 mss_cache;
+		__u32 window_clamp;
+		__u32 rcv_ssthresh;
+		__u32 frto_highmark;
+
+		__u32 srtt;
+		__u32 mdev;
+		__u32 mdev_max;
+		__u32 rttvar;
+		__u32 rtt_seq;
+
+		__u32 packets_out;
+		__u32 retrans_out;
+
+		__u32 snd_up;
+		__u32 rcv_wnd;
+		__u32 write_seq;
+		__u32 pushed_seq;
+		__u32 lost_out;
+		__u32 sacked_out;
+		__u32 fackets_out;
+		__u32 tso_deferred;
+		__u32 bytes_acked;
+
+		__s32 lost_cnt_hint;
+		__u32 retransmit_high;
+
+		__u32 lost_retrans_low;
+
+		__u32 prior_ssthresh;
+		__u32 high_seq;
+
+		__u32 retrans_stamp;
+		__u32 undo_marker;
+		__s32 undo_retrans;
+		__u32 total_retrans;
+
+		__u32 urg_seq;
+		__u32 keepalive_time;
+		__u32 keepalive_intvl;
+
+		__u16 urg_data;
+		__u16 advmss;
+		__u8 frto_counter;
+		__u8 nonagle;
+
+		__u8 ecn_flags;
+		__u8 reordering;
+
+		__u8 keepalive_probes;
+	} tcp __attribute__ ((aligned(8)));
+
+	struct {
+		struct in6_addr saddr;
+		struct in6_addr rcv_saddr;
+		struct in6_addr daddr;
+	} inet6 __attribute__ ((aligned(8)));
+
 	__u32 laddr_len;
 	__u32 raddr_len;
 	struct sockaddr_in laddr;
