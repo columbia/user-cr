@@ -39,7 +39,7 @@ restart: CFLAGS += -D__REENTRANT -pthread
 ifneq ($(SUBARCH),)
 restart: clone_$(SUBARCH).o genstack.o
 restart: CFLAGS += -DARCH_HAS_ECLONE
-nsexeccwp: clone_$(SUBARCH).o
+nsexeccwp: clone_$(SUBARCH).o genstack.o
 nsexeccwp: CFLAGS += -DARCH_HAS_ECLONE
 endif
 

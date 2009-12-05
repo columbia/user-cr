@@ -18,6 +18,7 @@
 
 #include "clone.h"
 #include "eclone.h"
+#include "genstack.h"
 
 extern pid_t getpgid(pid_t pid);
 extern pid_t getsid(pid_t pid);
@@ -270,17 +271,17 @@ int main(int argc, char *argv[])
 
 	if (use_clone) {
 		struct clone_args clone_args;
-		int stacksize = 4*getpagesize();
-		void *stack = malloc(stacksize);
+		size_t stacksize = 4 * sysconf(_SC_PAGESIZE);
+		genstack stack = genstack_alloc(stacksize);
 
 		if (!stack) {
-			perror("malloc");
+			perror("genstack_alloc");
 			return -1;
 		}
 
 		memset(&clone_args, 0, sizeof(clone_args));
-		clone_args.child_stack = (unsigned long)stack;
-		clone_args.child_stack_size = stacksize;
+		clone_args.child_stack = (unsigned long)genstack_base(stack);
+		clone_args.child_stack_size = genstack_size(stack);
 		clone_args.nr_pids = nr_pids;
 
 		printf("about to clone with %lx\n", flags);
