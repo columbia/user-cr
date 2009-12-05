@@ -37,7 +37,7 @@ restart: CFLAGS += -D__REENTRANT -pthread
 
 # eclone() is architecture specific
 ifneq ($(SUBARCH),)
-restart: clone_$(SUBARCH).o
+restart: clone_$(SUBARCH).o genstack.o
 restart: CFLAGS += -DARCH_HAS_ECLONE
 nsexeccwp: clone_$(SUBARCH).o
 nsexeccwp: CFLAGS += -DARCH_HAS_ECLONE

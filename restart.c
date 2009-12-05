@@ -36,6 +36,7 @@
 #include <linux/checkpoint_hdr.h>
 
 #include "eclone.h"
+#include "genstack.h"
 
 static char usage_str[] =
 "usage: restart [opts]\n"
@@ -1001,9 +1002,10 @@ static int ckpt_coordinator_status(struct ckpt_ctx *ctx)
 
 static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 {
-	void *stk = NULL;
 	pid_t coord_pid;
 	int copy, ret;
+	genstack stk;
+	void *sp;
 
 	ckpt_dbg("forking coordinator in new pidns\n");
 
@@ -1018,18 +1020,18 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 		return -1;
 	}
 
-	stk = malloc(PTHREAD_STACK_MIN);
+	stk = genstack_alloc(PTHREAD_STACK_MIN);
 	if (!stk) {
-		perror("coordinator stack malloc");
+		perror("coordinator genstack_alloc");
 		return -1;
 	}
-	stk += PTHREAD_STACK_MIN;
+	sp = genstack_sp(stk);
 
 	copy = ctx->args->copy_status;
 	ctx->args->copy_status = 1;
 
-	coord_pid = clone(__ckpt_coordinator, stk, CLONE_NEWPID|SIGCHLD, ctx);
-	free(stk - PTHREAD_STACK_MIN);
+	coord_pid = clone(__ckpt_coordinator, sp, CLONE_NEWPID|SIGCHLD, ctx);
+	genstack_release(stk);
 	if (coord_pid < 0) {
 		perror("clone coordinator");
 		return coord_pid;
@@ -1883,17 +1885,16 @@ int ckpt_fork_stub(void *data)
 static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 {
 	struct clone_args clone_args;
-	void *stack;
+	genstack stk;
 	unsigned long flags = SIGCHLD;
-	size_t stack_sz = PTHREAD_STACK_MIN;
 	size_t nr_pids = 1;
 	pid_t pid = 0;
 
 	ckpt_dbg("forking child vpid %d flags %#x\n", child->pid, child->flags);
 
-	stack = malloc(stack_sz);
-	if (!stack) {
-		perror("stack malloc");
+	stk = genstack_alloc(PTHREAD_STACK_MIN);
+	if (!stk) {
+		perror("ckpt_fork_child genstack_alloc");
 		return -1;
 	}
 
@@ -1921,19 +1922,19 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 		child->real_parent = _getpid();
 
 	memset(&clone_args, 0, sizeof(clone_args));
-	clone_args.child_stack = (unsigned long)stack;
-	clone_args.child_stack_size = stack_sz;
+	clone_args.child_stack = (unsigned long)genstack_base(stk);
+	clone_args.child_stack_size = genstack_size(stk);
 	clone_args.nr_pids = nr_pids;
 
 	pid = eclone(ckpt_fork_stub, child, flags, &clone_args, &pid);
 	if (pid < 0) {
 		perror("eclone");
-		free(stack);
+		genstack_release(stk);
 		return -1;
 	}
 
 	if (!(child->flags & TASK_THREAD))
-		free(stack);
+		genstack_release(stk);
 
 	ckpt_dbg("forked child vpid %d (asked %d)\n", pid, child->pid);
 	return pid;
@@ -1950,7 +1951,7 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
  */
 static int ckpt_fork_feeder(struct ckpt_ctx *ctx)
 {
-	void *stack;
+	genstack stk;
 	pid_t pid;
 
 	if (pipe(ctx->pipe_feed)) {
@@ -1969,14 +1970,13 @@ static int ckpt_fork_feeder(struct ckpt_ctx *ctx)
 	 * this may interfere with the restart.
 	 */
 
-	stack = malloc(PTHREAD_STACK_MIN);
-	if (!stack) {
-		perror("stack malloc");
+	stk = genstack_alloc(PTHREAD_STACK_MIN);
+	if (!stk) {
+		perror("ckpt_fork_feeder genstack_alloc");
 		return -1;
 	}
-	stack += PTHREAD_STACK_MIN;
 
-	pid = clone(ckpt_do_feeder, stack,
+	pid = clone(ckpt_do_feeder, genstack_sp(stk),
 		    CLONE_THREAD | CLONE_SIGHAND | CLONE_VM, ctx);
 	if (pid < 0) {
 		perror("feeder thread");
