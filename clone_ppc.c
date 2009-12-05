@@ -25,7 +25,6 @@
 #include "eclone.h"
 
 extern int __eclone(int (*fn)(void *arg),
-		    void *child_sp,
 		    int flags,
 		    void *fn_arg,
 		    struct clone_args *args,
@@ -39,9 +38,15 @@ int eclone(int (*fn)(void *), void *fn_arg, int clone_flags_low,
 	unsigned long child_sp;
 	int newpid;
 
+	/* The stack pointer for the child is communicated to the
+	 * kernel via clone_args.child_stack, and to the __eclone
+	 * assembly wrapper via the child_sp argument [r4].  So we
+	 * need to align child_sp here and ensure that the wrapper and
+	 * the kernel receive the same value.
+	 */
 	if (clone_args->child_stack)
-		child_sp = clone_args->child_stack +
-			clone_args->child_stack_size - 1;
+		child_sp = (clone_args->child_stack +
+			    clone_args->child_stack_size - 1) & ~0xf;
 	else
 		child_sp = 0;
 
@@ -50,7 +55,6 @@ int eclone(int (*fn)(void *), void *fn_arg, int clone_flags_low,
 	my_args.child_stack_size = 0;
 
 	newpid = __eclone(fn,
-			  (void *)child_sp,
 			  clone_flags_low,
 			  fn_arg,
 			  &my_args,

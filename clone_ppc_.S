@@ -20,12 +20,11 @@
 #endif
 
 /* int [r3] eclone(int (*fn)(void *arg) [r3],
- *                          void *child_sp [r4],
- *                          int flags [r5],
- *                          void *fn_arg [r6],
- *                          struct clone_args *args [r7],
- *                          size_t args_size [r8],
- *                          pid_t *pids [r9]);
+ *                          int flags [r4],
+ *                          void *fn_arg [r5],
+ *                          struct clone_args *args [r6],
+ *                          size_t args_size [r7],
+ *                          pid_t *pids [r8]);
  * Creates a child task with the pids specified by pids.
  * Returns to parent only, child execution and exit is handled here.
  * On error, returns negated errno.  On success, returns the pid of the child
@@ -40,25 +39,18 @@ __eclone:
 	/* Set up parent's stack frame. */
 	stwu	r1,-32(r1)
 
-	/* Save non-volatiles (r28-r31) which we plan to use. */
-	stmw	r28,16(r1)
+	/* Save non-volatiles (r30-r31) which we plan to use. */
+	stmw	r30,16(r1)
 
-	/* Set up child's stack frame. */
-	clrrwi	r4,r4,4
-	li	r0,0
-	stw	r0,-16(r4)
-
-	/* Save fn, stack pointer, flags, and fn_arg across system call. */
-	mr	r28,r3
-	mr	r29,r4
-	mr	r30,r5
-	mr	r31,r6
+	/* Save fn and fn_arg across system call. */
+	mr	r30,r3
+	mr	r31,r5
 
 	/* Set up arguments for system call. */
-	mr	r3,r5	/* flags */
-	mr	r4,r7	/* clone_args */
-	mr	r5,r8	/* clone_args' size */
-	mr	r6,r9	/* pids */
+	mr	r3,r4	/* flags */
+	mr	r4,r6	/* clone_args */
+	mr	r5,r7	/* clone_args' size */
+	mr	r6,r8	/* pids */
 
 	/* Do the system call */
 	li	r0,__NR_eclone
@@ -70,7 +62,7 @@ __eclone:
 	bne	cr1,eclone_parent
 
 	/* Child. Call fn. */
-	mtctr	r28
+	mtctr	r30
 	mr	r3,r31
 	bctrl
 
@@ -80,7 +72,7 @@ __eclone:
 
 eclone_parent:
 	/* Restore non-volatiles. */
-	lmw	r28,16(r1)
+	lmw	r30,16(r1)
 
 	addi	r1,r1,32
 
