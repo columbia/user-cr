@@ -11,6 +11,10 @@
 #include <asm/unistd.h>
 #include "powerpc_asm.h"
 
+#ifdef __powerpc64__
+#error This code is 32-bit only!
+#endif
+
 #ifndef __NR_eclone
 #define __NR_eclone     323
 #endif
