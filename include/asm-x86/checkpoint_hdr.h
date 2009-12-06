@@ -113,6 +113,8 @@ struct ckpt_hdr_cpu {
 #define CKPT_X86_SEG_NULL 0
 #define CKPT_X86_SEG_USER32_CS 1
 #define CKPT_X86_SEG_USER32_DS 2
+#define CKPT_X86_SEG_USER64_CS 3
+#define CKPT_X86_SEG_USER64_DS 4
 #define CKPT_X86_SEG_TLS 0x4000 /* 0100 0000 0000 00xx */
 #define CKPT_X86_SEG_LDT 0x8000 /* 100x xxxx xxxx xxxx */
 

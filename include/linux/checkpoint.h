@@ -43,11 +43,11 @@
 #elif __s390x__
 
 #	ifndef __NR_checkpoint
-#		define __NR_checkpoint 332
+#		define __NR_checkpoint 333
 #	endif
 
 #	ifndef __NR_restart
-#		define __NR_restart 333
+#		define __NR_restart 334
 #	endif
 
 #elif __i386__
@@ -58,6 +58,16 @@
 
 #	ifndef __NR_restart
 #		define __NR_restart 339
+#	endif
+
+#elif __x86_64__
+
+#	ifndef __NR_checkpoint
+#		define __NR_checkpoint 300
+#	endif
+
+#	ifndef __NR_restart
+#		define __NR_restart 301
 #	endif
 
 #else

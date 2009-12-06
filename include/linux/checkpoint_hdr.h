@@ -189,6 +189,8 @@ enum {
 #define CKPT_ARCH_PPC32 CKPT_ARCH_PPC32
 	CKPT_ARCH_PPC64,
 #define CKPT_ARCH_PPC64 CKPT_ARCH_PPC64
+	CKPT_ARCH_X86_64,
+#define CKPT_ARCH_X86_64 CKPT_ARCH_X86_64
 };
 
 /* shared objrects (objref) */
