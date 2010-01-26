@@ -51,6 +51,7 @@ static char usage_str[] =
 "  -r,--root=ROOT        restart under the directory ROOT instead of current\n"
 "     --signal=SIG       send SIG to root task on SIGINT (default: SIGKILL\n"
 "                        to container root, SIGINT otherwise)\n"
+"     --mntns            restart under a private mounts namespace\n"
 "  -w,--wait             wait for root task to termiate (default)\n"
 "     --show-status      show exit status of root task (implies -w)\n"
 "     --copy-status      imitate exit status of root task (implies -w)\n"
@@ -337,6 +338,7 @@ struct args {
 	int inspect;
 	char *root;
 	int wait;
+	int mntns;
 	int show_status;
 	int copy_status;
 	char *freezer;
@@ -417,6 +419,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "logfile",	required_argument,	NULL, 'l' },
 		{ "logfile-fd",	required_argument,	NULL, 8 },
 		{ "root",	required_argument,	NULL, 'r' },
+		{ "mntns",	no_argument,		NULL, 11 },
 		{ "wait",	no_argument,		NULL, 'w' },
 		{ "show-status",	no_argument,	NULL, 1 },
 		{ "copy-status",	no_argument,	NULL, 2 },
@@ -528,6 +531,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			break;
 		case 10:
 			args->fail |= cond_to_mask(&opts[optind].name[5]);
+			break;
+		case 11:
+			args->mntns = 1;
 			break;
 		default:
 			usage(usage_str);
@@ -763,6 +769,12 @@ int main(int argc, char *argv[])
 	/* freezer preparation */
 	if (args.freezer && freezer_prepare(&ctx) < 0)
 		exit(1);
+
+	/* private mounts namespace ? */
+	if (args.mntns && unshare(CLONE_NEWNS | CLONE_FS) < 0) {
+		perror("unshare");
+		exit(1);
+	}
 
 	/* chroot ? */
 	if (args.root && chroot(args.root) < 0) {
@@ -1011,8 +1023,8 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 
 	/*
 	 * The coordinator report restart susccess/failure via pipe.
-	 * (It cannot use return value, because the in the default
-	 * --wait --copy-status case it is already used to report the
+	 * (It cannot use return value, because in the default case
+	 * of --wait --copy-status it is already used to report the
 	 * root-task's return value).
 	 */
 	if (pipe(ctx->pipe_coord) < 0) {
