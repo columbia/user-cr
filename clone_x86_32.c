@@ -66,7 +66,7 @@ int eclone(int (*fn)(void *), void *fn_arg, int clone_flags_low,
 		 "b" (clone_flags_low),	/* flags -> 1st (ebx) */
 		 "c" (&my_args),	/* clone_args -> 2nd (ecx) */
 		 "d" (sizeof(my_args)),	/* args_size -> 3rd (edx) */
-		 "D" (pids)		/* pids -> 4th (edi) */
+		 "S" (pids)		/* pids -> 4th (esi) */
 		);
 
 	if (retval < 0) {
