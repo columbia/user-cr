@@ -25,7 +25,7 @@
 #include "eclone.h"
 
 #ifndef __NR_eclone
-#define __NR_eclone 337
+#define __NR_eclone 338
 #endif
 
 int eclone(int (*fn)(void *), void *fn_arg, int clone_flags_low,
