@@ -45,6 +45,14 @@ endif
 
 # on powerpc, need also assembly file
 ifeq ($(SUBARCH),ppc)
+CFLAGS += -m32
+ASFLAGS += -m32
+restart: clone_$(SUBARCH)_.o
+nsexeccwp: clone_$(SUBARCH)_.o
+endif
+ifeq ($(SUBARCH),ppc64)
+CFLAGS += -m64
+ASFLAGS += -m64
 restart: clone_$(SUBARCH)_.o
 nsexeccwp: clone_$(SUBARCH)_.o
 endif
