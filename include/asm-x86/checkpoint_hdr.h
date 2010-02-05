@@ -99,14 +99,6 @@ struct ckpt_hdr_cpu {
 
 	__u32 used_math;
 
-	/* debug registers */
-	__u64 debugreg0;
-	__u64 debugreg1;
-	__u64 debugreg2;
-	__u64 debugreg3;
-	__u64 debugreg6;
-	__u64 debugreg7;
-
 	/* thread_xstate contents follow (if used_math) */
 } __attribute__((aligned(8)));
 

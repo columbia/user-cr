@@ -97,6 +97,8 @@ enum {
 #define CKPT_HDR_UTS_NS CKPT_HDR_UTS_NS
 	CKPT_HDR_IPC_NS,
 #define CKPT_HDR_IPC_NS CKPT_HDR_IPC_NS
+	CKPT_HDR_MNT_NS,
+#define CKPT_HDR_MNT_NS CKPT_HDR_MNT_NS
 	CKPT_HDR_CAPABILITIES,
 #define CKPT_HDR_CAPABILITIES CKPT_HDR_CAPABILITIES
 	CKPT_HDR_USER_NS,
@@ -137,6 +139,9 @@ enum {
 #define CKPT_HDR_PGARR CKPT_HDR_PGARR
 	CKPT_HDR_MM_CONTEXT,
 #define CKPT_HDR_MM_CONTEXT CKPT_HDR_MM_CONTEXT
+
+	CKPT_HDR_FS = 451,  /* must be after file-table, mm */
+#define CKPT_HDR_FS CKPT_HDR_FS
 
 	CKPT_HDR_IPC = 501,
 #define CKPT_HDR_IPC CKPT_HDR_IPC
@@ -183,14 +188,14 @@ enum {
 	/* do not change order (will break ABI) */
 	CKPT_ARCH_X86_32 = 1,
 #define CKPT_ARCH_X86_32 CKPT_ARCH_X86_32
+	CKPT_ARCH_X86_64,
+#define CKPT_ARCH_X86_64 CKPT_ARCH_X86_64
 	CKPT_ARCH_S390X,
 #define CKPT_ARCH_S390X CKPT_ARCH_S390X
 	CKPT_ARCH_PPC32,
 #define CKPT_ARCH_PPC32 CKPT_ARCH_PPC32
 	CKPT_ARCH_PPC64,
 #define CKPT_ARCH_PPC64 CKPT_ARCH_PPC64
-	CKPT_ARCH_X86_64,
-#define CKPT_ARCH_X86_64 CKPT_ARCH_X86_64
 };
 
 /* shared objrects (objref) */
@@ -212,6 +217,8 @@ enum obj_type {
 #define CKPT_OBJ_FILE CKPT_OBJ_FILE
 	CKPT_OBJ_MM,
 #define CKPT_OBJ_MM CKPT_OBJ_MM
+	CKPT_OBJ_FS,
+#define CKPT_OBJ_FS CKPT_OBJ_FS
 	CKPT_OBJ_SIGHAND,
 #define CKPT_OBJ_SIGHAND CKPT_OBJ_SIGHAND
 	CKPT_OBJ_SIGNAL,
@@ -222,6 +229,8 @@ enum obj_type {
 #define CKPT_OBJ_UTS_NS CKPT_OBJ_UTS_NS
 	CKPT_OBJ_IPC_NS,
 #define CKPT_OBJ_IPC_NS CKPT_OBJ_IPC_NS
+	CKPT_OBJ_MNT_NS,
+#define CKPT_OBJ_MNT_NS CKPT_OBJ_MNT_NS
 	CKPT_OBJ_USER_NS,
 #define CKPT_OBJ_USER_NS CKPT_OBJ_USER_NS
 	CKPT_OBJ_CRED,
@@ -413,7 +422,7 @@ struct ckpt_hdr_task_ns {
 struct ckpt_hdr_ns {
 	struct ckpt_hdr h;
 	__s32 uts_objref;
-	__u32 ipc_objref;
+	__s32 ipc_objref;
 } __attribute__((aligned(8)));
 
 /* cannot include <linux/tty.h> from userspace, so define: */
@@ -435,6 +444,7 @@ struct ckpt_hdr_task_objs {
 
 	__s32 files_objref;
 	__s32 mm_objref;
+	__s32 fs_objref;
 	__s32 sighand_objref;
 	__s32 signal_objref;
 } __attribute__((aligned(8)));
@@ -472,6 +482,12 @@ enum restart_block_type {
 };
 
 /* file system */
+struct ckpt_hdr_fs {
+	struct ckpt_hdr h;
+	/* char *fs_root */
+	/* char *fs_pwd */
+} __attribute__((aligned(8)));
+
 struct ckpt_hdr_file_table {
 	struct ckpt_hdr h;
 	__s32 fdt_nfds;
@@ -932,7 +948,7 @@ struct ckpt_hdr_ipc_msg {
 
 struct ckpt_hdr_ipc_msg_msg {
 	struct ckpt_hdr h;
-	__s32 m_type;
+	__s64 m_type;
 	__u32 m_ts;
 	__s32 sec_ref;
 } __attribute__((aligned(8)));

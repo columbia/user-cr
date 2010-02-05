@@ -14,7 +14,7 @@
  *  distribution for more details.
  */
 
-#define CHECKPOINT_VERSION 4
+#define CHECKPOINT_VERSION 5
 
 /* checkpoint user flags */
 #define CHECKPOINT_SUBTREE 0x1
@@ -53,21 +53,21 @@
 #elif __i386__
 
 #	ifndef __NR_checkpoint
-#		define __NR_checkpoint 338
+#		define __NR_checkpoint 339
 #	endif
 
 #	ifndef __NR_restart
-#		define __NR_restart 339
+#		define __NR_restart 340
 #	endif
 
 #elif __x86_64__
 
 #	ifndef __NR_checkpoint
-#		define __NR_checkpoint 300
+#		define __NR_checkpoint 301
 #	endif
 
 #	ifndef __NR_restart
-#		define __NR_restart 301
+#		define __NR_restart 302
 #	endif
 
 #else
