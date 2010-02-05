@@ -31,6 +31,22 @@ extern int __eclone(int (*fn)(void *arg),
 		    size_t args_size,
 		    pid_t *pids);
 
+#ifdef __powerpc64__
+#define MIN_STACK_FRAME 48
+#else
+#define MIN_STACK_FRAME 16
+#endif
+
+static unsigned long stack_setup_frame(unsigned long base, unsigned long size)
+{
+	unsigned long *sp;
+
+	sp =  (unsigned long *)(((base + size - 1) & ~0xf) - MIN_STACK_FRAME);
+	*sp = 0;
+
+	return (unsigned long)sp;
+}
+
 int eclone(int (*fn)(void *), void *fn_arg, int clone_flags_low,
 	   struct clone_args *clone_args, pid_t *pids)
 {
@@ -38,15 +54,9 @@ int eclone(int (*fn)(void *), void *fn_arg, int clone_flags_low,
 	unsigned long child_sp;
 	int newpid;
 
-	/* The stack pointer for the child is communicated to the
-	 * kernel via clone_args.child_stack, and to the __eclone
-	 * assembly wrapper via the child_sp argument [r4].  So we
-	 * need to align child_sp here and ensure that the wrapper and
-	 * the kernel receive the same value.
-	 */
 	if (clone_args->child_stack)
-		child_sp = (clone_args->child_stack +
-			    clone_args->child_stack_size - 1) & ~0xf;
+		child_sp = stack_setup_frame(clone_args->child_stack,
+					     clone_args->child_stack_size);
 	else
 		child_sp = 0;
 
