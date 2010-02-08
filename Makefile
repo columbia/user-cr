@@ -5,7 +5,7 @@ CKPT_HEADERS = include/linux/checkpoint.h \
 		include/linux/checkpoint_hdr.h \
 		include/asm/checkpoint_hdr.h
 
-# detect architecture (for clone_with_pids)
+# detect architecture (for eclone)
 SUBARCH = $(patsubst i%86,x86_32,$(shell uname -m))
 
 # compile with debug ?
@@ -18,9 +18,12 @@ WARNS := -Wall -Wstrict-prototypes -Wno-trigraphs
 CFLAGS += -g $(WARNS) $(CKPT_INCLUDE) $(DEBUG)
 
 # install dir
-INSTALL_DIR = /bin
+BIN_INSTALL_DIR = /bin
+LIB_INSTALL_DIR = /lib
 
-PROGS =	checkpoint restart ckptinfo nsexeccwp
+ECLONE_PROGS = restart nsexeccwp
+PROGS =	checkpoint ckptinfo $(ECLONE_PROGS)
+LIB_ECLONE = libeclone.a
 
 # other cleanup
 OTHER = ckptinfo_types.c
@@ -32,29 +35,29 @@ LDLIBS = -lm
 all: $(PROGS)
 	@make -C test
 
+$(LIB_ECLONE):
+	ar ruv $(LIB_ECLONE) $^
+
 # restart needs to be thread-safe
 restart: CFLAGS += -D__REENTRANT -pthread
 
 # eclone() is architecture specific
 ifneq ($(SUBARCH),)
-restart: clone_$(SUBARCH).o genstack.o
-restart: CFLAGS += -DARCH_HAS_ECLONE
-nsexeccwp: clone_$(SUBARCH).o genstack.o
-nsexeccwp: CFLAGS += -DARCH_HAS_ECLONE
+$(ECLONE_PROGS): $(LIB_ECLONE) 
+$(ECLONE_PROGS): CFLAGS += -DARCH_HAS_ECLONE
+$(LIB_ECLONE): clone_$(SUBARCH).o genstack.o
 endif
 
 # on powerpc, need also assembly file
 ifeq ($(SUBARCH),ppc)
 CFLAGS += -m32
 ASFLAGS += -m32
-restart: clone_$(SUBARCH)_.o
-nsexeccwp: clone_$(SUBARCH)_.o
+$(LIB_ECLONE): clone_$(SUBARCH)_.o
 endif
 ifeq ($(SUBARCH),ppc64)
 CFLAGS += -m64
 ASFLAGS += -m64
-restart: clone_$(SUBARCH)_.o
-nsexeccwp: clone_$(SUBARCH)_.o
+$(LIB_ECLONE): clone_$(SUBARCH)_.o
 endif
 
 # ckptinfo dependencies
@@ -64,8 +67,10 @@ ckptinfo_types.c: $(CKPT_HEADERS) ckptinfo.py
 	cat $(CKPT_HEADERS) | ./ckptinfo.py > ckptinfo_types.c
 
 install:
-	@echo /usr/bin/install -m 755 checkpoint restart ckptinfo $(INSTALL_DIR)
-	@/usr/bin/install -m 755 checkpoint restart ckptinfo $(INSTALL_DIR)
+	@echo /usr/bin/install -m 755 checkpoint restart ckptinfo $(BIN_INSTALL_DIR)
+	@/usr/bin/install -m 755 checkpoint restart ckptinfo $(BIN_INSTALL_DIR)
+	@echo /usr/bin/install -m 755 $(LIB_ECLONE) $(LIB_INSTALL_DIR)
+	@/usr/bin/install -m 755 $(LIB_ECLONE) $(LIB_INSTALL_DIR)
 
 $(CKPT_HEADERS): %:
 	./scripts/extract-headers.sh -s $(KERNELSRC) -o ./include
@@ -76,5 +81,5 @@ distclean: clean
 	@rm -f $(CKPT_HEADERS)
 
 clean:
-	@rm -f $(PROGS) $(OTHER) *~ *.o headers.h
+	@rm -f $(PROGS) $(LIB_ECLONE) $(OTHER) *~ *.o headers.h
 	@make -C test clean
