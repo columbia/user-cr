@@ -30,6 +30,7 @@
 #include <asm/unistd.h>
 #include <sys/syscall.h>
 #include <sys/prctl.h>
+#include <sys/mount.h>
 
 #include <linux/sched.h>
 #include <linux/checkpoint.h>
@@ -65,10 +66,12 @@ static char usage_str[] =
 "     --inspect          inspect image on-the-fly for error records\n"
 "  -v,--verbose          verbose output\n"
 "  -d,--debug            debugging output\n"
-"     --warn-COND        warn on condition COND, but proceed anyways\n"
+"     --skip-COND        skip condition COND, and proceed anyway\n"
+"     --warn-COND        warn on condition COND, but proceed anyway\n"
 "     --fail-COND        warn on condition COND, and abort operation\n"
 "  	  COND=any:        any condition\n"
 "  	  COND=pidzero:    task with sid/pgid zero in a --no-pidns restart\n"
+"  	  COND=mntproc:    /proc isn't already mounted at restart (def: warn)\n"
 "";
 
 /*
@@ -273,6 +276,8 @@ int global_child_collected;
 int global_send_sigint = -1;
 int global_sent_sigint;
 
+static int ckpt_remount_proc(struct ckpt_ctx *ctx);
+
 static int ckpt_build_tree(struct ckpt_ctx *ctx);
 static int ckpt_init_tree(struct ckpt_ctx *ctx);
 static int ckpt_set_creator(struct ckpt_ctx *ctx, struct task *task);
@@ -352,7 +357,13 @@ struct args {
 };
 
 #define CKPT_COND_PIDZERO  0x1
+#define CKPT_COND_MNTPROC  0x2
+
+#define CKPT_COND_NONE     0
 #define CKPT_COND_ANY      ULONG_MAX
+
+#define CKPT_COND_WARN     (CKPT_COND_MNTPROC)	/* default */
+#define CKPT_COND_FAIL     (CKPT_COND_NONE)	/* default */
 
 static void usage(char *str)
 {
@@ -379,6 +390,7 @@ static long cond_to_mask(const char *cond)
 		long mask;
 	} conditions[] = {
 		{"pidzero", CKPT_COND_PIDZERO},
+		{"mntproc", CKPT_COND_MNTPROC},
 		{"any", CKPT_COND_ANY},
 		{NULL, 0}
 	};
@@ -441,6 +453,8 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	args->wait = 1;
 	args->infd = -1;
 	args->logfd = -1;
+	args->warn = CKPT_COND_WARN;
+	args->fail = CKPT_COND_FAIL;
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, &optind);
@@ -981,10 +995,40 @@ static int ckpt_probe_child(pid_t pid, char *str)
 	return 0;
 }
 
+/*
+ * Remount the /proc with a new instance: tasks that start a new
+ * pid-ns need a fresh mount of /proc to reflect their pid-ns.
+ */
+static int ckpt_remount_proc(struct ckpt_ctx *ctx)
+{
+	if (unshare(CLONE_NEWNS | CLONE_FS) < 0) {
+		perror("unshare");
+		return -1;
+	}
+	/* this is unlikely, but we don't want to fail */
+	if (umount2("/proc", MNT_DETACH) < 0) {
+		if (ckpt_cond_fail(ctx, CKPT_COND_MNTPROC)) {
+			perror("umount -l /proc");
+			return -1;
+		}
+		if (ckpt_cond_warn(ctx, CKPT_COND_MNTPROC))
+			ckpt_err("[warn] failed to un-mount old /proc\n");
+	}
+	if (mount("proc", "/proc", "proc", 0, NULL) < 0) {
+		perror("mount -t proc");
+		return -1;
+	}
+
+	return 0;
+}
+
 #ifdef CLONE_NEWPID
 static int __ckpt_coordinator(void *arg)
 {
 	struct ckpt_ctx *ctx = (struct ckpt_ctx *) arg;
+
+	if (ckpt_remount_proc(ctx) < 0)
+		return -1;
 
 	if (!ctx->args->wait)
 		close(ctx->pipe_coord[0]);
@@ -1849,6 +1893,10 @@ int ckpt_fork_stub(void *data)
 {
 	struct task *task = (struct task *) data;
 	struct ckpt_ctx *ctx = task->ctx;
+
+	/* tasks with new pid-ns need new /proc mount */
+	if ((task->flags & TASK_NEWPID) && ckpt_remount_proc(ctx) < 0)
+		return -1;
 
 	/*
 	 * In restart into a new pid namespace (--pidns), coordinator
