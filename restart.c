@@ -53,6 +53,7 @@ static char usage_str[] =
 "     --signal=SIG       send SIG to root task on SIGINT (default: SIGKILL\n"
 "                        to container root, SIGINT otherwise)\n"
 "     --mntns            restart under a private mounts namespace\n"
+"     --mount-pty        start in a new devpts namespace to supprt ptys\n"
 "  -w,--wait             wait for root task to termiate (default)\n"
 "     --show-status      show exit status of root task (implies -w)\n"
 "     --copy-status      imitate exit status of root task (implies -w)\n"
@@ -277,6 +278,7 @@ int global_send_sigint = -1;
 int global_sent_sigint;
 
 static int ckpt_remount_proc(struct ckpt_ctx *ctx);
+static int ckpt_remount_devpts(struct ckpt_ctx *ctx);
 
 static int ckpt_build_tree(struct ckpt_ctx *ctx);
 static int ckpt_init_tree(struct ckpt_ctx *ctx);
@@ -344,6 +346,7 @@ struct args {
 	char *root;
 	int wait;
 	int mntns;
+	int mnt_pty;
 	int show_status;
 	int copy_status;
 	char *freezer;
@@ -358,12 +361,15 @@ struct args {
 
 #define CKPT_COND_PIDZERO  0x1
 #define CKPT_COND_MNTPROC  0x2
+#define CKPT_COND_MNTPTY   0x4
 
 #define CKPT_COND_NONE     0
 #define CKPT_COND_ANY      ULONG_MAX
 
-#define CKPT_COND_WARN     (CKPT_COND_MNTPROC)	/* default */
-#define CKPT_COND_FAIL     (CKPT_COND_NONE)	/* default */
+/* default for skip/warn/fail */
+#define CKPT_COND_WARN     (CKPT_COND_MNTPROC | \
+			    CKPT_COND_MNTPTY)
+#define CKPT_COND_FAIL     (CKPT_COND_NONE)
 
 static void usage(char *str)
 {
@@ -441,6 +447,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "debug",	no_argument,		NULL, 'd' },
 		{ "warn-pidzero",	no_argument,	NULL, 9 },
 		{ "fail-pidzero",	no_argument,	NULL, 10 },
+		{ "mount-pty",	no_argument,		NULL, 12 },
 		{ NULL,		0,			NULL, 0 }
 	};
 	static char optc[] = "hdvkpPwWF:r:i:l:";
@@ -549,6 +556,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		case 11:
 			args->mntns = 1;
 			break;
+		case 12:
+			args->mnt_pty = 1;
+			break;
 		default:
 			usage(usage_str);
 		}
@@ -602,6 +612,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		printf("Invalid used of both -l/--logfile and --logfile-fd\n");
 		exit(1);
 	}
+
+	if (args->mnt_pty)
+		args->mntns = 1;
 }
 
 static void report_exit_status(int status, char *str, int debug)
@@ -796,6 +809,10 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+	/* remount /dev/pts ? */
+	if (args.mnt_pty && ckpt_remount_devpts(&ctx) < 0)
+		exit(1);
+
 	/* self-restart ends here: */
 	if (args.self) {
 		restart(getpid(), STDIN_FILENO, RESTART_TASKSELF, args.logfd);
@@ -925,6 +942,38 @@ static int ckpt_collect_child(struct ckpt_ctx *ctx)
 	}
 
 	return ckpt_parse_status(status, mimic, verbose);
+}
+
+static int ckpt_remount_devpts(struct ckpt_ctx *ctx)
+{
+	struct stat ptystat;
+
+	/* make sure /dev/ptmx is a link else we'll just break */
+	if (lstat("/dev/ptmx", &ptystat) < 0) {
+		perror("stat /dev/ptmx");
+		return -1;
+	}
+	if ((ptystat.st_mode & S_IFMT) != S_IFLNK) {
+		ckpt_err("Error: /dev/ptmx must be a link to /dev/pts/ptmx\n");
+		return -1;
+	}
+
+	/* this is unlikely, but maybe we don't want to fail */
+	if (umount2("/dev/pts", MNT_DETACH) < 0) {
+		if (ckpt_cond_fail(ctx, CKPT_COND_MNTPTY)) {
+			perror("umount -l /dev/pts");
+			return -1;
+		}
+		if (ckpt_cond_warn(ctx, CKPT_COND_MNTPTY))
+			ckpt_err("[warn] failed to un-mount old /dev/pts\n");
+	}
+	if (mount("pts", "/dev/pts", "devpts", 0,
+		  "ptmxmode=666,newinstance") < 0) {
+		perror("mount -t devpts -o newinstance");
+		return -1;
+	}
+
+	return 0;
 }
 
 static int ckpt_close_files(void)
