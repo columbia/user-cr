@@ -146,7 +146,7 @@ int move_to_new_cgroup(int newcgroup)
 
 	snprintf(cgroupname, 150, "%s/%d", cgroupbase, newcgroup);
 	ret = mkdir(cgroupname, 0755);
-	if (ret)
+	if (ret && errno != EEXIST)
 		return 0;
 	snprintf(tasksfname, 200, "%s/tasks", cgroupname);
 	fout = fopen(tasksfname, "w");
