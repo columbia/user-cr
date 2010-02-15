@@ -21,7 +21,7 @@ CFLAGS += -g $(WARNS) $(CKPT_INCLUDE) $(DEBUG)
 BIN_INSTALL_DIR = /bin
 LIB_INSTALL_DIR = /lib
 
-ECLONE_PROGS = restart nsexeccwp
+ECLONE_PROGS = restart nsexec
 PROGS =	checkpoint ckptinfo $(ECLONE_PROGS)
 LIB_ECLONE = libeclone.a
 
@@ -67,8 +67,8 @@ ckptinfo_types.c: $(CKPT_HEADERS) ckptinfo.py
 	cat $(CKPT_HEADERS) | ./ckptinfo.py > ckptinfo_types.c
 
 install:
-	@echo /usr/bin/install -m 755 checkpoint restart ckptinfo $(BIN_INSTALL_DIR)
-	@/usr/bin/install -m 755 checkpoint restart ckptinfo $(BIN_INSTALL_DIR)
+	@echo /usr/bin/install -m 755 checkpoint restart nsexec ckptinfo $(BIN_INSTALL_DIR)
+	@/usr/bin/install -m 755 checkpoint restart ckptinfo nsexec $(BIN_INSTALL_DIR)
 	@echo /usr/bin/install -m 755 $(LIB_ECLONE) $(LIB_INSTALL_DIR)
 	@/usr/bin/install -m 755 $(LIB_ECLONE) $(LIB_INSTALL_DIR)
 
