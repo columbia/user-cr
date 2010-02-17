@@ -154,7 +154,7 @@ int move_to_new_cgroup(int newcgroup)
 	fout = fopen(tasksfname, "w");
 	if (!fout)
 		return 0;
-	fprintf(fout, "%d\n", getpid());
+	fprintf(fout, "%ld\n", syscall(__NR_getpid));
 	fclose(fout);
 	return 1;
 }
@@ -193,7 +193,7 @@ int do_child(void *vargv)
 
 	/* if pid == 1 then remount /proc */
 	/* But if the container has no /proc don't fret */
-	if (getpid() == 1) {
+	if (syscall(__NR_getpid) == 1) {
 		umount2("/proc", MNT_DETACH);
 		mount("proc", "/proc", "proc", 0, NULL);
 	}
