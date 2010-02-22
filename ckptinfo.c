@@ -28,20 +28,17 @@ static char usage_str[] =
 "\tOptions:\n"
 "\t -h,--help             print this help message\n"
 "\t -e,--error            show error messages\n"
-"\t -p,--position         show in input stream\n"
 "\t -v,--verbose          verbose output\n"
 "\t    --show-arch-regs   show registers contents\n"
 "";
 
 struct args {
 	int error;
-	int position;
 	int verbose;
 	int show_arch_regs;
 };
 
 int __verbose;
-int __position;
 unsigned long __filepos;
 
 #define VERBOSE(_format, _args...)			\
@@ -87,12 +84,11 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	static struct option opts[] = {
 		{ "help",	no_argument,		NULL, 'h' },
 		{ "error",	no_argument,		NULL, 'e' },
-		{ "position",	no_argument,		NULL, 'p' },
 		{ "verbose",	no_argument,		NULL, 'v' },
 		{ "show-arch-regs",	no_argument,	NULL, 1 },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hvep";
+	static char optc[] = "hve";
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, NULL);
@@ -105,9 +101,6 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			usage(usage_str);
 		case 'e':
 			args->error = 1;
-			break;
-		case 'p':
-			args->position = 1;
 			break;
 		case 'v':
 			args->verbose = 1;
@@ -135,8 +128,6 @@ int main(int argc, char *argv[])
 
 	if (args.verbose)
 		__verbose = 1;
-	if (args.position)
-		__position = 1;
 
 	argc -= optind;
 
@@ -191,9 +182,8 @@ static int image_read_obj(int fd, struct ckpt_hdr **hh)
 	if (ret == 0)
 		return 0;
 
-	if (__position)
-		VERBOSE("[%lu] ", __filepos);
-	VERBOSE("info: object %s len %d\n", hdr_to_str(h.type), h.len);
+	VERBOSE("info: [@%lu] object %s len %d\n",
+		__filepos, hdr_to_str(h.type), h.len);
 
 	p = malloc(h.len);
 	if (!p) {
