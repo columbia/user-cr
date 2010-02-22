@@ -20,6 +20,7 @@
 #include "clone.h"
 #include "eclone.h"
 #include "genstack.h"
+#include "compat.h"
 
 extern pid_t getpgid(pid_t pid);
 extern pid_t getsid(pid_t pid);

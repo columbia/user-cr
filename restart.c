@@ -38,6 +38,7 @@
 
 #include "eclone.h"
 #include "genstack.h"
+#include "compat.h"
 
 static char usage_str[] =
 "usage: restart [opts]\n"
