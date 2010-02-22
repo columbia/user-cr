@@ -256,7 +256,7 @@ struct ckpt_const {
 	/* task */
 	__u16 task_comm_len;
 	/* mm */
-	__u16 mm_saved_auxv_len;
+	__u16 at_vector_size;
 	/* signal */
 	__u16 signal_nsig;
 	/* uts */
@@ -340,13 +340,13 @@ struct ckpt_hdr_task {
 	__u32 exit_signal;
 	__u32 pdeath_signal;
 
-	__u64 set_child_tid;
-	__u64 clear_child_tid;
-
 	__u32 compat_robust_futex_head_len;
 	__u32 compat_robust_futex_list; /* a compat __user ptr */
 	__u32 robust_futex_head_len;
 	__u64 robust_futex_list; /* a __user ptr */
+
+	__u64 set_child_tid;
+	__u64 clear_child_tid;
 } __attribute__((aligned(8)));
 
 /* Posix capabilities */

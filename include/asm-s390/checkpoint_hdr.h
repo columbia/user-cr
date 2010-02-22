@@ -65,6 +65,11 @@ struct ckpt_hdr_cpu {
 	__u8 instruction_fetch;
 };
 
+struct ckpt_hdr_thread {
+	struct ckpt_hdr h;
+	__u64 thread_info_flags;
+};
+
 struct ckpt_hdr_mm_context {
 	struct ckpt_hdr h;
 	unsigned long vdso_base;
