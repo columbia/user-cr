@@ -18,8 +18,9 @@ WARNS := -Wall -Wstrict-prototypes -Wno-trigraphs
 CFLAGS += -g $(WARNS) $(CKPT_INCLUDE) $(DEBUG)
 
 # install dir
-BIN_INSTALL_DIR = /bin
-LIB_INSTALL_DIR = /lib
+PREFIX ?= /usr/local
+BIN_INSTALL_DIR := $(PREFIX)/bin
+LIB_INSTALL_DIR := $(PREFIX)/lib
 
 ECLONE_PROGS = restart nsexec
 PROGS =	checkpoint ckptinfo $(ECLONE_PROGS)
