@@ -33,10 +33,10 @@ LDLIBS = -lm
 .PHONY: all distclean clean headers install
 
 all: $(PROGS)
-	@make -C test
+	@$(MAKE) -C test
 
 $(LIB_ECLONE):
-	ar ruv $(LIB_ECLONE) $^
+	$(AR) ruv $(LIB_ECLONE) $^
 
 # restart needs to be thread-safe
 restart: CFLAGS += -D__REENTRANT -pthread
@@ -82,4 +82,4 @@ distclean: clean
 
 clean:
 	@rm -f $(PROGS) $(LIB_ECLONE) $(OTHER) *~ *.o headers.h
-	@make -C test clean
+	@$(MAKE) -C test clean
