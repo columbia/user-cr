@@ -69,10 +69,8 @@ ckptinfo_types.c: $(CKPT_HEADERS) ckptinfo.py
 
 install: $(PROGS)
 	/usr/bin/install -d -D $(BIN_INSTALL_DIR) $(LIB_INSTALL_DIR)
-	@echo /usr/bin/install -m 755 checkpoint restart nsexec ckptinfo $(BIN_INSTALL_DIR)
-	@/usr/bin/install -m 755 checkpoint restart ckptinfo nsexec $(BIN_INSTALL_DIR)
-	@echo /usr/bin/install -m 755 $(LIB_ECLONE) $(LIB_INSTALL_DIR)
-	@/usr/bin/install -m 755 $(LIB_ECLONE) $(LIB_INSTALL_DIR)
+	/usr/bin/install -m 755 checkpoint restart ckptinfo nsexec $(BIN_INSTALL_DIR)
+	/usr/bin/install -m 755 $(LIB_ECLONE) $(LIB_INSTALL_DIR)
 
 $(CKPT_HEADERS): %:
 	./scripts/extract-headers.sh -s $(KERNELSRC) -o ./include
