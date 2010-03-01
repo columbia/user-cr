@@ -1,3 +1,11 @@
+# *DOCUMENTATION*
+#
+# List of environment variables that may be set by caller:
+#  KERNELSRC	- path of kernel sources (def: ../linux)
+#  SUBARCH	- sub-architecture (def: extract with 'uname')
+#  PREFIX	- prefix path for installation (def: /usr/local)
+#
+
 KERNELSRC ?= ../linux
 
 CKPT_INCLUDE = -I./include
@@ -6,7 +14,7 @@ CKPT_HEADERS = include/linux/checkpoint.h \
 		include/asm/checkpoint_hdr.h
 
 # detect architecture (for eclone)
-SUBARCH = $(patsubst i%86,x86_32,$(shell uname -m))
+SUBARCH ?= $(patsubst i%86,x86_32,$(shell uname -m))
 
 # compile with debug ?
 DEBUG = -DCHECKPOINT_DEBUG
