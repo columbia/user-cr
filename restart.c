@@ -383,7 +383,6 @@ struct args {
 	int show_status;
 	int copy_status;
 	char *freezer;
-	char *input;
 	int infd;
 	int klogfd;
 	long warn;
@@ -489,6 +488,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	int no_pidns;
 
 	char *klogfile;
+	char *input;
 
 	/* defaults */
 	memset(args, 0, sizeof(*args));
@@ -500,6 +500,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	no_pidns = 0;
 
 	klogfile = NULL;
+	input = NULL;
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, &optind);
@@ -517,7 +518,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			args->inspect = 1;
 			break;
 		case 'i':
-			args->input = optarg;
+			input = optarg;
 			break;
 		case 7:
 			args->infd = str2num(optarg);
@@ -641,9 +642,18 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		exit(1);
 	}
 
-	if (args->input && args->infd >= 0) {
+	if (input && args->infd >= 0) {
 		ckpt_err("Invalid use of both -i/--input and --input-fd\n");
 		exit(1);
+	}
+
+	/* input file ? */
+	if (input) {
+		args->infd = open(input, O_RDONLY, 0);
+		if (args->infd < 0) {
+			ckpt_perror("open input file");
+			exit(1);
+		}
 	}
 
 	if (klogfile && args->klogfd >= 0) {
@@ -816,15 +826,6 @@ int main(int argc, char *argv[])
 
 	parse_args(&args, argc, argv);
 	ctx.args = &args;
-
-	/* input file ? */
-	if (args.input) {
-		args.infd = open(args.input, O_RDONLY, 0);
-		if (args.infd < 0) {
-			ckpt_perror("open input file");
-			exit(1);
-		}
-	}
 
 	/* input file descriptor (default: stdin) */
 	if (args.infd >= 0) {
