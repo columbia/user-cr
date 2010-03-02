@@ -191,9 +191,9 @@ static int str2sig(char *str)
 	return -1;
 }
 
-inline static int restart(pid_t pid, int fd, unsigned long flags, int logfd)
+inline static int restart(pid_t pid, int fd, unsigned long flags, int klogfd)
 {
-	return syscall(__NR_restart, pid, fd, flags, logfd);
+	return syscall(__NR_restart, pid, fd, flags, klogfd);
 }
 
 #define BUFSIZE  (4 * 4096)
@@ -353,7 +353,7 @@ struct args {
 	char *input;
 	int infd;
 	char *logfile;
-	int logfd;
+	int klogfd;
 	long warn;
 	long fail;
 	int keep_lsm;
@@ -460,7 +460,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	memset(args, 0, sizeof(*args));
 	args->wait = 1;
 	args->infd = -1;
-	args->logfd = -1;
+	args->klogfd = -1;
 	args->warn = CKPT_COND_WARN;
 	args->fail = CKPT_COND_FAIL;
 	no_pidns = 0;
@@ -494,8 +494,8 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			args->logfile = optarg;
 			break;
 		case 8:
-			args->logfd = str2num(optarg);
-			if (args->logfd < 0) {
+			args->klogfd = str2num(optarg);
+			if (args->klogfd < 0) {
 				printf("restart: invalid file descriptor\n");
 				exit(1);
 			}
@@ -610,7 +610,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		exit(1);
 	}
 
-	if (args->logfile && args->logfd >= 0) {
+	if (args->logfile && args->klogfd >= 0) {
 		printf("Invalid used of both -l/--logfile and --logfile-fd\n");
 		exit(1);
 	}
@@ -783,17 +783,17 @@ int main(int argc, char *argv[])
 
 	/* (optional) log file */
 	if (args.logfile) {
-		args.logfd = open(args.logfile,
+		args.klogfd = open(args.logfile,
 				  O_RDWR | O_CREAT | O_EXCL, 0644);
-		if (args.logfd < 0) {
+		if (args.klogfd < 0) {
 			perror("open log file");
 			exit(1);
 		}
 	}
 
 	/* output file descriptor (default: none) */
-	if (args.logfd < 0)
-		args.logfd = CHECKPOINT_FD_NONE;
+	if (args.klogfd < 0)
+		args.klogfd = CHECKPOINT_FD_NONE;
 
 	/* freezer preparation */
 	if (args.freezer && freezer_prepare(&ctx) < 0)
@@ -817,7 +817,7 @@ int main(int argc, char *argv[])
 
 	/* self-restart ends here: */
 	if (args.self) {
-		restart(getpid(), STDIN_FILENO, RESTART_TASKSELF, args.logfd);
+		restart(getpid(), STDIN_FILENO, RESTART_TASKSELF, args.klogfd);
 		/* reach here if restart(2) failed ! */
 		perror("restart");
 		exit(1);
@@ -1202,7 +1202,7 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 	if (ctx->args->keep_lsm)
 		flags |= RESTART_KEEP_LSM;
 
-	ret = restart(root_pid, STDIN_FILENO, flags, ctx->args->logfd);
+	ret = restart(root_pid, STDIN_FILENO, flags, ctx->args->klogfd);
 
 	if (ret < 0) {
 		perror("restart failed");
