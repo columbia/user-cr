@@ -292,7 +292,7 @@ struct ckpt_ctx {
 	char container[BUFSIZE];
 	char tree[BUFSIZE];
 	char buf[BUFSIZE];
-	struct args *args;
+	struct app_restart_args *args;
 
 	char *freezer;
 };
@@ -371,7 +371,7 @@ struct pid_swap {
 	pid_t new;
 };
 
-struct args {
+struct app_restart_args {
 	int self;
 	int pids;
 	int pidns;
@@ -452,7 +452,7 @@ static inline int ckpt_cond_fail(struct ckpt_ctx *ctx, long mask)
 	return (ctx->args->fail & mask);
 }
 
-static void parse_args(struct args *args, int argc, char *argv[])
+static void parse_args(struct app_restart_args *args, int argc, char *argv[])
 {
 	static struct option opts[] = {
 		{ "help",	no_argument,		NULL, 'h' },
@@ -807,7 +807,7 @@ static int freezer_register(struct ckpt_ctx *ctx, pid_t pid)
 	return ret;
 }
 
-int app_restart(struct args *args)
+int app_restart(struct app_restart_args *args)
 {
 	struct ckpt_ctx ctx;
 	int ret;
@@ -918,7 +918,7 @@ int app_restart(struct args *args)
 
 int main(int argc, char *argv[])
 {
-	struct args args;
+	struct app_restart_args args;
 
 	/*
 	 * Initialize the log/error fds early so even parse_args() errors
