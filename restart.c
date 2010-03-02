@@ -342,7 +342,6 @@ struct args {
 	int self;
 	int pids;
 	int pidns;
-	int no_pidns;
 	int inspect;
 	char *root;
 	int wait;
@@ -455,6 +454,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 
 	int optind;
 	int sig;
+	int no_pidns;
 
 	/* defaults */
 	memset(args, 0, sizeof(*args));
@@ -463,6 +463,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	args->logfd = -1;
 	args->warn = CKPT_COND_WARN;
 	args->fail = CKPT_COND_FAIL;
+	no_pidns = 0;
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, &optind);
@@ -503,7 +504,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			args->pidns = 1;
 			break;
 		case 'P':
-			args->no_pidns = 1;
+			no_pidns = 1;
 			break;
 		case 6:  /* --self */
 			args->self = 1;
@@ -565,7 +566,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		}
 	}
 
-	if (args->no_pidns)
+	if (no_pidns)
 		args->pidns = 0;
 
 #ifndef CLONE_NEWPID
@@ -598,7 +599,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 #endif
 
 	if (args->self &&
-	    (args->pids || args->pidns || args->no_pidns ||
+	    (args->pids || args->pidns || no_pidns ||
 	     args->show_status || args->copy_status || args->freezer)) {
 		printf("Invalid mix of --self with multiprocess options\n");
 		exit(1);
