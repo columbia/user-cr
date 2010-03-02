@@ -352,7 +352,6 @@ struct args {
 	char *freezer;
 	char *input;
 	int infd;
-	char *logfile;
 	int klogfd;
 	long warn;
 	long fail;
@@ -456,6 +455,8 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	int sig;
 	int no_pidns;
 
+	char *klogfile;
+
 	/* defaults */
 	memset(args, 0, sizeof(*args));
 	args->wait = 1;
@@ -464,6 +465,8 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	args->warn = CKPT_COND_WARN;
 	args->fail = CKPT_COND_FAIL;
 	no_pidns = 0;
+
+	klogfile = NULL;
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, &optind);
@@ -491,7 +494,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			}
 			break;
 		case 'l':
-			args->logfile = optarg;
+			klogfile = optarg;
 			break;
 		case 8:
 			args->klogfd = str2num(optarg);
@@ -610,10 +613,20 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		exit(1);
 	}
 
-	if (args->logfile && args->klogfd >= 0) {
+	if (klogfile && args->klogfd >= 0) {
 		printf("Invalid used of both -l/--logfile and --logfile-fd\n");
 		exit(1);
 	}
+
+	/* (optional) log file */
+	if (klogfile) {
+		args->klogfd = open(klogfile, O_RDWR | O_CREAT | O_EXCL, 0644);
+		if (args->klogfd < 0) {
+			perror("open log file");
+			exit(1);
+		}
+	}
+
 
 	if (args->mnt_pty)
 		args->mntns = 1;
@@ -779,16 +792,6 @@ int main(int argc, char *argv[])
 		}
 		if (args.infd != STDIN_FILENO)
 			close(args.infd);
-	}
-
-	/* (optional) log file */
-	if (args.logfile) {
-		args.klogfd = open(args.logfile,
-				  O_RDWR | O_CREAT | O_EXCL, 0644);
-		if (args.klogfd < 0) {
-			perror("open log file");
-			exit(1);
-		}
 	}
 
 	/* output file descriptor (default: none) */
