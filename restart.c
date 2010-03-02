@@ -807,63 +807,51 @@ static int freezer_register(struct ckpt_ctx *ctx, pid_t pid)
 	return ret;
 }
 
-int main(int argc, char *argv[])
+int app_restart(struct args *args)
 {
 	struct ckpt_ctx ctx;
-	struct args args;
 	int ret;
 
-	/*
-	 * Initialize the log/error fds early so even parse_args() errors
-	 * are redirected here. Even if we later implement command line options
-	 * that override these, any errors/messages that occur before those
-	 * new options are parsed still go to stdout/stderr
-	 */
-	global_ulogfd = fileno(stdout);
-	global_uerrfd = fileno(stderr);
-
 	memset(&ctx, 0, sizeof(ctx));
-
-	parse_args(&args, argc, argv);
-	ctx.args = &args;
+	ctx.args = args;
 
 	/* input file descriptor (default: stdin) */
-	if (args.infd >= 0) {
-		if (dup2(args.infd, STDIN_FILENO) < 0) {
+	if (args->infd >= 0) {
+		if (dup2(args->infd, STDIN_FILENO) < 0) {
 			ckpt_perror("dup2 input file");
 			exit(1);
 		}
-		if (args.infd != STDIN_FILENO)
-			close(args.infd);
+		if (args->infd != STDIN_FILENO)
+			close(args->infd);
 	}
 
 	/* output file descriptor (default: none) */
-	if (args.klogfd < 0)
-		args.klogfd = CHECKPOINT_FD_NONE;
+	if (args->klogfd < 0)
+		args->klogfd = CHECKPOINT_FD_NONE;
 
 	/* freezer preparation */
-	if (args.freezer && freezer_prepare(&ctx) < 0)
+	if (args->freezer && freezer_prepare(&ctx) < 0)
 		exit(1);
 
 	/* private mounts namespace ? */
-	if (args.mntns && unshare(CLONE_NEWNS | CLONE_FS) < 0) {
+	if (args->mntns && unshare(CLONE_NEWNS | CLONE_FS) < 0) {
 		ckpt_perror("unshare");
 		exit(1);
 	}
 
 	/* chroot ? */
-	if (args.root && chroot(args.root) < 0) {
+	if (args->root && chroot(args->root) < 0) {
 		ckpt_perror("chroot");
 		exit(1);
 	}
 
 	/* remount /dev/pts ? */
-	if (args.mnt_pty && ckpt_remount_devpts(&ctx) < 0)
+	if (args->mnt_pty && ckpt_remount_devpts(&ctx) < 0)
 		exit(1);
 
 	/* self-restart ends here: */
-	if (args.self) {
-		restart(getpid(), STDIN_FILENO, RESTART_TASKSELF, args.klogfd);
+	if (args->self) {
+		restart(getpid(), STDIN_FILENO, RESTART_TASKSELF, args->klogfd);
 		/* reach here if restart(2) failed ! */
 		ckpt_perror("restart");
 		exit(1);
@@ -926,6 +914,24 @@ int main(int argc, char *argv[])
 	}
 
 	return ret;
+}
+
+int main(int argc, char *argv[])
+{
+	struct args args;
+
+	/*
+	 * Initialize the log/error fds early so even parse_args() errors
+	 * are redirected here. Even if we later implement command line options
+	 * that override these, any errors/messages that occur before those
+	 * new options are parsed still go to stdout/stderr
+	 */
+	global_ulogfd = fileno(stdout);
+	global_uerrfd = fileno(stderr);
+
+	parse_args(&args, argc, argv);
+
+	return app_restart(&args);
 }
 
 static int ckpt_parse_status(int status, int mimic, int verbose)
