@@ -160,12 +160,36 @@ static void parse_args(struct app_checkpoint_args *args, int argc, char *argv[])
 	}
 }
 
+int app_checkpoint(int pid, unsigned long flags,
+				struct app_checkpoint_args *args)
+{
+	int ret;
+
+	/* output file descriptor (default: stdout) */
+	if (args->outfd < 0)
+		args->outfd = STDOUT_FILENO;
+
+	/* output file descriptor (default: none) */
+	if (args->logfd < 0)
+		args->logfd = CHECKPOINT_FD_NONE;
+
+	ret = checkpoint(pid, args->outfd, flags, args->logfd);
+
+	if (ret < 0) {
+		perror("checkpoint");
+		fprintf(stderr, "(you may use 'ckptinfo -e' for more info)\n");
+	} else if (args->verbose) {
+		fprintf(stderr, "checkpoint id %d\n", ret);
+	}
+
+	return (ret > 0 ? 0 : 1);
+}
+
 int main(int argc, char *argv[])
 {
 	struct app_checkpoint_args args;
 	unsigned long flags = 0;
 	pid_t pid;
-	int ret;
 
 	memset(&args, 0, sizeof(args));
 	parse_args(&args, argc, argv);
@@ -174,31 +198,15 @@ int main(int argc, char *argv[])
 	if (argc != 1)
 		usage(usage_str);
 
-	if (!args.container)
-		flags |= CHECKPOINT_SUBTREE;
-
 	pid = atoi(argv[optind]);
 	if (pid <= 0) {
 		printf("invalid pid\n");
 		exit(1);
 	}
 
-	/* output file descriptor (default: stdout) */
-	if (args.outfd < 0)
-		args.outfd = STDOUT_FILENO;
+	if (!args.container)
+		flags |= CHECKPOINT_SUBTREE;
 
-	/* output file descriptor (default: none) */
-	if (args.logfd < 0)
-		args.logfd = CHECKPOINT_FD_NONE;
-
-	ret = checkpoint(pid, args.outfd, flags, args.logfd);
-
-	if (ret < 0) {
-		perror("checkpoint");
-		fprintf(stderr, "(you may use 'ckptinfo -e' for more info)\n"); 
-	} else if (args.verbose) {
-		fprintf(stderr, "checkpoint id %d\n", ret);
-	}
-
-	return (ret > 0 ? 0 : 1);
+	return app_checkpoint(pid, flags, &args);
 }
+
