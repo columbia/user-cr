@@ -40,7 +40,6 @@ static char usage_str[] =
 "";
 
 struct args {
-	char *output;
 	int outfd;
 	char *logfile;
 	int logfd;
@@ -84,10 +83,12 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ NULL,		0,			NULL, 0 }
 	};
 	static char optc[] = "hvco:l:";
+	char *output;
 
 	/* defaults */
 	args->outfd = -1;
 	args->logfd = -1;
+	output = NULL;
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, NULL);
@@ -99,7 +100,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		case 'h':
 			usage(usage_str);
 		case 'o':
-			args->output = optarg;
+			output = optarg;
 			break;
 		case 1:
 			args->outfd = str2num(optarg);
@@ -129,10 +130,20 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		}
 	}
 
-	if (args->output && args->outfd >= 0) {
-		printf("Invalid used of both -o/--output and --output-fd\n");
+	if (output && args->outfd >= 0) {
+		printf("Invalid use of both -o/--output and --output-fd\n");
 		exit(1);
 	}
+
+	/* output file */
+	if (output) {
+		args->outfd = open(output, O_RDWR | O_CREAT | O_EXCL, 0644);
+		if (args->outfd < 0) {
+			perror("open output file");
+			exit(1);
+		}
+	}
+
 	if (args->logfile && args->logfd >= 0) {
 		printf("Invalid used of both -l/--logfile and --logfile-fd\n");
 		exit(1);
@@ -160,16 +171,6 @@ int main(int argc, char *argv[])
 	if (pid <= 0) {
 		printf("invalid pid\n");
 		exit(1);
-	}
-
-	/* output file */
-	if (args.output) {
-		args.outfd = open(args.output,
-				     O_RDWR | O_CREAT | O_EXCL, 0644);
-		if (args.outfd < 0) {
-			perror("open output file");
-			exit(1);
-		}
 	}
 
 	/* output file descriptor (default: stdout) */
