@@ -41,7 +41,6 @@ static char usage_str[] =
 
 struct args {
 	int outfd;
-	char *logfile;
 	int logfd;
 	int container;
 	int verbose;
@@ -84,11 +83,13 @@ static void parse_args(struct args *args, int argc, char *argv[])
 	};
 	static char optc[] = "hvco:l:";
 	char *output;
+	char *logfile;
 
 	/* defaults */
 	args->outfd = -1;
 	args->logfd = -1;
 	output = NULL;
+	logfile = NULL;
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, NULL);
@@ -110,7 +111,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			}
 			break;
 		case 'l':
-			args->logfile = optarg;
+			logfile = optarg;
 			break;
 		case 2:
 			args->logfd = str2num(optarg);
@@ -144,9 +145,18 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		}
 	}
 
-	if (args->logfile && args->logfd >= 0) {
-		printf("Invalid used of both -l/--logfile and --logfile-fd\n");
+	if (logfile && args->logfd >= 0) {
+		printf("Invalid use of both -l/--logfile and --logfile-fd\n");
 		exit(1);
+	}
+
+	/* (optional) log file */
+	if (logfile) {
+		args->logfd = open(logfile, O_RDWR | O_CREAT | O_EXCL, 0644);
+		if (args->logfd < 0) {
+			perror("open log file");
+			exit(1);
+		}
 	}
 }
 
@@ -176,16 +186,6 @@ int main(int argc, char *argv[])
 	/* output file descriptor (default: stdout) */
 	if (args.outfd < 0)
 		args.outfd = STDOUT_FILENO;
-
-	/* (optional) log file */
-	if (args.logfile) {
-		args.logfd = open(args.logfile,
-				  O_RDWR | O_CREAT | O_EXCL, 0644);
-		if (args.logfd < 0) {
-			perror("open log file");
-			exit(1);
-		}
-	}
 
 	/* output file descriptor (default: none) */
 	if (args.logfd < 0)
