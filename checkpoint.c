@@ -39,7 +39,7 @@ static char usage_str[] =
 "  -v,--verbose          verbose output\n"
 "";
 
-struct args {
+struct app_checkpoint_args {
 	int outfd;
 	int logfd;
 	int container;
@@ -69,7 +69,7 @@ static int str2num(char *str)
 	return num;
 }
 
-static void parse_args(struct args *args, int argc, char *argv[])
+static void parse_args(struct app_checkpoint_args *args, int argc, char *argv[])
 {
 	static struct option opts[] = {
 		{ "help",	no_argument,		NULL, 'h' },
@@ -162,7 +162,7 @@ static void parse_args(struct args *args, int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
-	struct args args;
+	struct app_checkpoint_args args;
 	unsigned long flags = 0;
 	pid_t pid;
 	int ret;
