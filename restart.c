@@ -396,6 +396,7 @@ struct app_restart_args {
 	int klogfd;
 	long warn;
 	int debug;
+	int verbose;
 	long fail;
 	int keep_lsm;
 };
@@ -522,7 +523,7 @@ static void parse_args(struct app_restart_args *args, int argc, char *argv[])
 		case 'h':
 			usage(usage_str);
 		case 'v':
-			global_verbose = 1;
+			global_verbose = args->verbose = 1;
 			break;
 		case 5:  /* --inspect */
 			args->inspect = 1;
@@ -826,6 +827,7 @@ int app_restart(struct app_restart_args *args)
 	ctx.args = args;
 
 	global_debug = args->debug;
+	global_verbose = args->verbose;
 
 	/* input file descriptor (default: stdin) */
 	if (args->infd >= 0) {
