@@ -395,6 +395,7 @@ struct app_restart_args {
 	int infd;
 	int klogfd;
 	long warn;
+	int debug;
 	long fail;
 	int keep_lsm;
 };
@@ -590,7 +591,7 @@ static void parse_args(struct app_restart_args *args, int argc, char *argv[])
 			args->copy_status = 1;
 			break;
 		case 'd':
-			global_debug = 1;
+			global_debug = args->debug = 1;
 			break;
 		case 'F':
 			args->freezer = optarg;
@@ -823,6 +824,8 @@ int app_restart(struct app_restart_args *args)
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.args = args;
+
+	global_debug = args->debug;
 
 	/* input file descriptor (default: stdin) */
 	if (args->infd >= 0) {
