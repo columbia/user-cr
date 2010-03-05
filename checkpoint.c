@@ -21,6 +21,8 @@
 
 #include <linux/checkpoint.h>
 
+#include "common.h"
+
 static char usage_str[] =
 "usage: ckpt [opts] PID\n"
 "  'checkpoint' takes a checkpoint of the task indicated by PID, and all\n"
@@ -54,35 +56,6 @@ inline static int checkpoint(pid_t pid, int fd, unsigned long flags, int logfd)
 {
 	return syscall(__NR_checkpoint, pid, fd, flags, logfd);
 }
-
-#define BUFSIZE  (4 * 4096)
-static inline void ckpt_msg(int fd, char *format, ...)
-{
-	va_list ap;
-	char *bufp;
-	if (fd < 0)
-		return;
-
-	va_start(ap, format);
-
-	bufp = malloc(BUFSIZE);
-	if(bufp) {
-		vsnprintf(bufp, BUFSIZE, format, ap);
-		write(fd, bufp, strlen(bufp));
-	}
-	free(bufp);
-
-	va_end(ap);
-}
-
-#define ckpt_err(...)				\
-	ckpt_msg(global_uerrfd, __VA_ARGS__)
-
-#define ckpt_perror(s)                                                  \
-	do {                                                            \
-		ckpt_msg(global_uerrfd, s);                             \
-		ckpt_msg(global_uerrfd, ": %s\n", strerror(errno));     \
-	} while (0)
 
 static void usage(char *str)
 {

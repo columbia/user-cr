@@ -13,6 +13,8 @@ CKPT_HEADERS = include/linux/checkpoint.h \
 		include/linux/checkpoint_hdr.h \
 		include/asm/checkpoint_hdr.h
 
+CR_OBJS = checkpoint.o restart.o
+
 # detect architecture (for eclone)
 SUBARCH ?= $(patsubst i%86,x86_32,$(shell uname -m))
 
@@ -49,6 +51,8 @@ $(LIB_ECLONE):
 
 # restart needs to be thread-safe
 restart: CFLAGS += -D__REENTRANT -pthread
+
+$(CR_OBJS): common.h
 
 # eclone() is architecture specific
 ifneq ($(SUBARCH),)
