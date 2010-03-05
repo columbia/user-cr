@@ -21,6 +21,7 @@
 
 #include <linux/checkpoint.h>
 
+#include "app-checkpoint.h"
 #include "common.h"
 
 static char usage_str[] =
@@ -43,14 +44,6 @@ static char usage_str[] =
 "";
 
 static int global_uerrfd = -1;
-
-struct app_checkpoint_args {
-	int outfd;
-	int logfd;
-	int uerrfd;
-	int container;
-	int verbose;
-};
 
 inline static int checkpoint(pid_t pid, int fd, unsigned long flags, int logfd)
 {

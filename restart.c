@@ -40,6 +40,7 @@
 #include "eclone.h"
 #include "genstack.h"
 #include "compat.h"
+#include "app-checkpoint.h"
 #include "common.h"
 
 static char usage_str[] =
@@ -222,8 +223,13 @@ static int global_verbose;
 static pid_t global_child_pid;
 static int global_child_status;
 static int global_child_collected;
-static int global_send_sigint = -1;
 static int global_sent_sigint;
+
+/*
+ * TODO: Implement an API to let callers choose if/how an interrupt be sent
+ * 	 and remove global_send_sigint.
+ */
+int global_send_sigint = -1;
 
 static int ckpt_remount_proc(struct ckpt_ctx *ctx);
 static int ckpt_remount_devpts(struct ckpt_ctx *ctx);
@@ -286,29 +292,6 @@ static inline pid_t _getpid(void)
 struct pid_swap {
 	pid_t old;
 	pid_t new;
-};
-
-struct app_restart_args {
-	int self;
-	int pids;
-	int pidns;
-	int inspect;
-	char *root;
-	int wait;
-	int mntns;
-	int mnt_pty;
-	int show_status;
-	int copy_status;
-	char *freezer;
-	int infd;
-	int klogfd;
-	int ulogfd;
-	int uerrfd;
-	long warn;
-	int debug;
-	int verbose;
-	long fail;
-	int keep_lsm;
 };
 
 static void usage(char *str)
