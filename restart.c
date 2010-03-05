@@ -301,15 +301,15 @@ struct ckpt_ctx {
  * TODO: Do we need to direct user-space restart messages to two different
  * 	 fds (like stdout and stderr) or can we just use one ?
  */
-int global_ulogfd;
-int global_uerrfd;
-int global_debug;
-int global_verbose;
-pid_t global_child_pid;
-int global_child_status;
-int global_child_collected;
-int global_send_sigint = -1;
-int global_sent_sigint;
+static int global_ulogfd;
+static int global_uerrfd;
+static int global_debug;
+static int global_verbose;
+static pid_t global_child_pid;
+static int global_child_status;
+static int global_child_collected;
+static int global_send_sigint = -1;
+static int global_sent_sigint;
 
 static int ckpt_remount_proc(struct ckpt_ctx *ctx);
 static int ckpt_remount_devpts(struct ckpt_ctx *ctx);
