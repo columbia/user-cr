@@ -394,6 +394,7 @@ struct app_restart_args {
 	char *freezer;
 	int infd;
 	int klogfd;
+	int ulogfd;
 	long warn;
 	int debug;
 	int verbose;
@@ -506,6 +507,7 @@ static void parse_args(struct app_restart_args *args, int argc, char *argv[])
 	args->wait = 1;
 	args->infd = -1;
 	args->klogfd = -1;
+	args->ulogfd = fileno(stdout);
 	args->warn = CKPT_COND_WARN;
 	args->fail = CKPT_COND_FAIL;
 	no_pidns = 0;
@@ -828,6 +830,7 @@ int app_restart(struct app_restart_args *args)
 
 	global_debug = args->debug;
 	global_verbose = args->verbose;
+	global_ulogfd = args->ulogfd;
 
 	/* input file descriptor (default: stdin) */
 	if (args->infd >= 0) {
