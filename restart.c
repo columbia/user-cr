@@ -509,6 +509,12 @@ int app_restart(struct app_restart_args *args)
 		ret = ckpt_coordinator(&ctx);
 	}
 
+	/*
+	 * On success, return pid of root of the restart process tree.
+	 */
+	if (ret >= 0)
+		ret = global_child_pid;
+
 	return ret;
 }
 

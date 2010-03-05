@@ -332,6 +332,7 @@ static void parse_args(struct app_restart_args *args, int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
+	int ret;
 	struct app_restart_args args;
 
 	/*
@@ -345,6 +346,10 @@ int main(int argc, char *argv[])
 
 	parse_args(&args, argc, argv);
 
-	return app_restart(&args);
+	ret = app_restart(&args);
+	if (ret > 0)
+		ret = 0;
+
+	return ret;
 }
 
