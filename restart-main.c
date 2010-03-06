@@ -324,10 +324,6 @@ static void parse_args(struct app_restart_args *args, int argc, char *argv[])
 			exit(1);
 		}
 	}
-
-
-	if (args->mnt_pty)
-		args->mntns = 1;
 }
 
 int main(int argc, char *argv[])

@@ -413,6 +413,9 @@ int process_args(struct app_restart_args *args)
 	if (args->klogfd < 0)
 		args->klogfd = CHECKPOINT_FD_NONE;
 
+	if (args->mnt_pty)
+		args->mntns = 1;
+
 	return 0;
 }
 
