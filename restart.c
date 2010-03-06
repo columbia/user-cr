@@ -416,6 +416,42 @@ int process_args(struct app_restart_args *args)
 	if (args->mnt_pty)
 		args->mntns = 1;
 
+#ifndef CLONE_NEWPID
+	if (args->pidns) {
+		ckpt_err("This version of restart was compiled without "
+		       "support for --pidns.\n");
+		exit(1);
+	}
+#endif
+
+#ifndef CHECKPOINT_DEBUG
+	if (global_debug) {
+		ckpt_err("This version of restart was compiled without "
+		       "support for --debug.\n");
+		exit(1);
+	}
+#endif
+
+	if (args->pidns)
+		args->pids = 1;
+
+#if 0   /* Defered until __NR_eclone makes it to standard headers */
+#ifndef __NR_eclone
+	if (args->pids) {
+		ckpt_err("This version of restart was compiled without "
+		       "support for --pids.\n");
+		exit(1);
+	}
+#endif
+#endif
+
+	if (args->self &&
+	    (args->pids || args->pidns || args->show_status ||
+	     args->copy_status || args->freezer)) {
+		ckpt_err("Invalid mix of --self with multiprocess options\n");
+		exit(1);
+	}
+
 	return 0;
 }
 
