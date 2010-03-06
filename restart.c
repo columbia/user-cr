@@ -388,14 +388,12 @@ static int freezer_register(struct ckpt_ctx *ctx, pid_t pid)
 	return ret;
 }
 
-int app_restart(struct app_restart_args *args)
+/*
+ * Validate the specified arguments and initialize globals based on the
+ * arguments. Return 0 on success.
+ */
+int process_args(struct app_restart_args *args)
 {
-	struct ckpt_ctx ctx;
-	int ret;
-
-	memset(&ctx, 0, sizeof(ctx));
-	ctx.args = args;
-
 	global_debug = args->debug;
 	global_verbose = args->verbose;
 	global_ulogfd = args->ulogfd;
@@ -414,6 +412,21 @@ int app_restart(struct app_restart_args *args)
 	/* output file descriptor (default: none) */
 	if (args->klogfd < 0)
 		args->klogfd = CHECKPOINT_FD_NONE;
+
+	return 0;
+}
+
+int app_restart(struct app_restart_args *args)
+{
+	struct ckpt_ctx ctx;
+	int ret;
+
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.args = args;
+
+	ret = process_args(args);
+	if (ret < 0)
+		return ret;
 
 	/* freezer preparation */
 	if (args->freezer && freezer_prepare(&ctx) < 0)
