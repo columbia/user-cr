@@ -130,6 +130,9 @@ struct task zero_task;
 #define TASK_SESSION	0x10	/* inherits creator's original sid */
 #define TASK_NEWPID	0x20	/* starts a new pid namespace */
 #define TASK_DEAD	0x40	/* dead task (dummy) */
+#define TASK_NEWROOT	0x80	/* task must chroot() */
+#define TASK_NEWPTS	0x100	/* remount devpts */
+#define TASK_NEWNS	0x200	/* unshare namespace/file-system */
 
 struct ckpt_ctx {
 	pid_t root_pid;
@@ -471,25 +474,24 @@ int app_restart(struct app_restart_args *args)
 	if (args->freezer && freezer_prepare(&ctx) < 0)
 		exit(1);
 
-	/* private mounts namespace ? */
-	if (args->mntns && unshare(CLONE_NEWNS | CLONE_FS) < 0) {
-		ckpt_perror("unshare");
-		exit(1);
-	}
-
-	/* chroot ? */
-	if (args->root && chroot(args->root) < 0) {
-		ckpt_perror("chroot");
-		exit(1);
-	}
-
-	/* remount /dev/pts ? */
-	if (args->mnt_pty && ckpt_remount_devpts(&ctx) < 0)
-		exit(1);
-
 	/* self-restart ends here: */
 	if (args->self) {
+		/* private mounts namespace ? */
+		if (args->mntns && unshare(CLONE_NEWNS | CLONE_FS) < 0) {
+			ckpt_perror("unshare");
+			exit(1);
+		}
+		/* chroot ? */
+		if (args->root && chroot(args->root) < 0) {
+			ckpt_perror("chroot");
+			exit(1);
+		}
+		/* remount /dev/pts ? */
+		if (args->mnt_pty && ckpt_remount_devpts(&ctx) < 0)
+			exit(1);
+
 		restart(getpid(), STDIN_FILENO, RESTART_TASKSELF, args->klogfd);
+
 		/* reach here if restart(2) failed ! */
 		ckpt_perror("restart");
 		exit(1);
@@ -543,10 +545,28 @@ int app_restart(struct app_restart_args *args)
 	if (ret < 0)
 		exit(1);
 
+	/*
+	 * Have the first child in the restarted process tree
+	 * setup devpts, root-dir and /proc if necessary, ...
+	 */
+	if (ctx.args->mnt_pty)
+		ctx.tasks_arr[0].flags |= TASK_NEWPTS;
+	if (ctx.args->mntns)
+		ctx.tasks_arr[0].flags |= TASK_NEWNS;
+	if (ctx.args->root)
+		ctx.tasks_arr[0].flags |= TASK_NEWROOT;
+
 	if (ctx.args->pidns && ctx.tasks_arr[0].pid != 1) {
 		ckpt_dbg("new pidns without init\n");
 		if (global_send_sigint == -1)
 			global_send_sigint = SIGINT;
+		/*
+		 * ...unless we have an explicit coordinator, in which case
+		 * the coordinator should set up the filesystems and
+		 * not the first process in the application process tree.
+		 */
+		ctx.tasks_arr[0].flags &=
+			~(TASK_NEWPTS | TASK_NEWROOT |TASK_NEWNS);
 		ret = ckpt_coordinator_pidns(&ctx);
 	} else if (ctx.args->pidns) {
 		ckpt_dbg("new pidns with init\n");
@@ -740,10 +760,6 @@ static int ckpt_probe_child(pid_t pid, char *str)
  */
 static int ckpt_remount_proc(struct ckpt_ctx *ctx)
 {
-	if (unshare(CLONE_NEWNS | CLONE_FS) < 0) {
-		ckpt_perror("unshare");
-		return -1;
-	}
 	/* this is unlikely, but we don't want to fail */
 	if (umount2("/proc", MNT_DETACH) < 0) {
 		if (ckpt_cond_fail(ctx, CKPT_COND_MNTPROC)) {
@@ -766,8 +782,17 @@ static int __ckpt_coordinator(void *arg)
 {
 	struct ckpt_ctx *ctx = (struct ckpt_ctx *) arg;
 
+	/* chroot ? */
+	if (ctx->args->root && chroot(ctx->args->root) < 0) {
+		ckpt_perror("chroot");
+		_exit(1);
+	}
+	/* tasks with new pid-ns need new /proc mount */
 	if (ckpt_remount_proc(ctx) < 0)
-		return -1;
+		_exit(1);
+	/* remount /dev/pts ? */
+	if (ctx->args->mnt_pty && ckpt_remount_devpts(ctx) < 0)
+		_exit(1);
 
 	if (!ctx->args->wait)
 		close(ctx->pipe_coord[0]);
@@ -797,6 +822,7 @@ static int ckpt_coordinator_status(struct ckpt_ctx *ctx)
 
 static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 {
+	unsigned long flags;
 	pid_t coord_pid;
 	int copy, ret;
 	genstack stk;
@@ -825,7 +851,10 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 	copy = ctx->args->copy_status;
 	ctx->args->copy_status = 1;
 
-	coord_pid = clone(__ckpt_coordinator, sp, CLONE_NEWPID|SIGCHLD, ctx);
+	/* in new pidns, we need these: */
+	flags = SIGCHLD | CLONE_NEWPID | CLONE_NEWNS;
+
+	coord_pid = clone(__ckpt_coordinator, sp, flags, ctx);
 	genstack_release(stk);
 	if (coord_pid < 0) {
 		ckpt_perror("clone coordinator");
@@ -1633,8 +1662,14 @@ int ckpt_fork_stub(void *data)
 	struct task *task = (struct task *) data;
 	struct ckpt_ctx *ctx = task->ctx;
 
+	/* chroot ? */
+	if ((task->flags & TASK_NEWROOT) && chroot(ctx->args->root) < 0)
+		return -1;
 	/* tasks with new pid-ns need new /proc mount */
 	if ((task->flags & TASK_NEWPID) && ckpt_remount_proc(ctx) < 0)
+		return -1;
+	/* remount /dev/pts ? */
+	if ((task->flags & TASK_NEWPTS) && ckpt_remount_devpts(ctx) < 0)
 		return -1;
 
 	/*
@@ -1753,6 +1788,9 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 #endif
 #endif /* CLONE_NEWPID */
 	}
+
+	if (child->flags & TASK_NEWNS)
+		flags |= CLONE_NEWNS;
 
 	if (child->flags & (TASK_SIBLING | TASK_THREAD))
 		child->real_parent = getppid();
