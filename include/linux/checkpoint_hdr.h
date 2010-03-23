@@ -111,6 +111,8 @@ enum {
 #define CKPT_HDR_GROUPINFO CKPT_HDR_GROUPINFO
 	CKPT_HDR_TASK_CREDS,
 #define CKPT_HDR_TASK_CREDS CKPT_HDR_TASK_CREDS
+	CKPT_HDR_VPIDS,
+#define CKPT_HDR_VPIDS CKPT_HDR_VPIDS
 
 	/* 201-299: reserved for arch-dependent */
 
@@ -321,11 +323,20 @@ struct ckpt_hdr_tree {
 } __attribute__((aligned(8)));
 
 struct ckpt_pids {
+	/* these pids are in root_nsproxy's pid ns */
 	__s32 vpid;
 	__s32 vppid;
 	__s32 vtgid;
 	__s32 vpgid;
 	__s32 vsid;
+	__s32 rsid; /* real pid - in checkpointer's pid_ns */
+	__s32 depth; /* pidns depth */
+} __attribute__((aligned(8)));
+
+/* number of vpids */
+struct ckpt_hdr_vpids {
+	struct ckpt_hdr h;
+	__s32 nr_vpids;
 } __attribute__((aligned(8)));
 
 /* pids */

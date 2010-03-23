@@ -244,6 +244,9 @@ struct task {
 
 	struct task *phantom;	/* pointer to place-holdler task (if any) */
 
+	int vidx;		/* index into vpid array, -1 if none */
+	int piddepth;
+
 	pid_t pid;		/* process IDs, our bread-&-butter */
 	pid_t ppid;
 	pid_t tgid;
@@ -272,6 +275,7 @@ struct ckpt_ctx {
 	int pipe_in;
 	int pipe_out;
 	int pids_nr;
+	int vpids_nr;
 
 	int pipe_child[2];	/* for children to report status */
 	int pipe_feed[2];	/* for feeder to provide input */
@@ -279,6 +283,7 @@ struct ckpt_ctx {
 
 	struct ckpt_pids *pids_arr;
 	struct ckpt_pids *copy_arr;
+	__s32 *vpids_arr;
 
 	struct task *tasks_arr;
 	int tasks_nr;
@@ -291,6 +296,7 @@ struct ckpt_ctx {
 	char header_arch[BUFSIZE];
 	char container[BUFSIZE];
 	char tree[BUFSIZE];
+	char vpids[BUFSIZE];
 	char buf[BUFSIZE];
 	struct app_restart_args *args;
 
@@ -316,6 +322,7 @@ static int ckpt_remount_devpts(struct ckpt_ctx *ctx);
 
 static int ckpt_build_tree(struct ckpt_ctx *ctx);
 static int ckpt_init_tree(struct ckpt_ctx *ctx);
+static int assign_vpids(struct ckpt_ctx *ctx);
 static int ckpt_set_creator(struct ckpt_ctx *ctx, struct task *task);
 static int ckpt_placeholder_task(struct ckpt_ctx *ctx, struct task *task);
 static int ckpt_propagate_session(struct ckpt_ctx *ctx, struct task *session);
@@ -339,6 +346,7 @@ static int ckpt_write_header(struct ckpt_ctx *ctx);
 static int ckpt_write_header_arch(struct ckpt_ctx *ctx);
 static int ckpt_write_container(struct ckpt_ctx *ctx);
 static int ckpt_write_tree(struct ckpt_ctx *ctx);
+static int ckpt_write_vpids(struct ckpt_ctx *ctx);
 
 static int _ckpt_read(int fd, void *buf, int count);
 static int ckpt_read(int fd, void *buf, int count);
@@ -350,6 +358,7 @@ static int ckpt_read_header(struct ckpt_ctx *ctx);
 static int ckpt_read_header_arch(struct ckpt_ctx *ctx);
 static int ckpt_read_container(struct ckpt_ctx *ctx);
 static int ckpt_read_tree(struct ckpt_ctx *ctx);
+static int ckpt_read_vpids(struct ckpt_ctx *ctx);
 
 static int hash_init(struct ckpt_ctx *ctx);
 static void hash_exit(struct ckpt_ctx *ctx);
@@ -883,11 +892,21 @@ int app_restart(struct app_restart_args *args)
 		exit(1);
 	}
 
+	ret = ckpt_read_vpids(&ctx);
+	if (ret < 0) {
+		ckpt_perror("read c/r tree");
+		exit(1);
+	}
+
 	/* build creator-child-relationship tree */
 	if (hash_init(&ctx) < 0)
 		exit(1);
 	ret = ckpt_build_tree(&ctx);
 	hash_exit(&ctx);
+	if (ret < 0)
+		exit(1);
+
+	ret = assign_vpids(&ctx);
 	if (ret < 0)
 		exit(1);
 
@@ -1218,13 +1237,13 @@ static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 
 	return ret;
 }
-#else
+#else /* CLONE_NEWPID */
 static int ckpt_coordinator_pidns(struct ckpt_ctx *ctx)
 {
 	ckpt_err("logical error: ckpt_coordinator_pidns unexpected\n");
 	exit(1);
 }
-#endif
+#endif /* CLONE_NEWPID */
 
 static int ckpt_coordinator(struct ckpt_ctx *ctx)
 {
@@ -2050,8 +2069,8 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 	struct clone_args clone_args;
 	genstack stk;
 	unsigned long flags = SIGCHLD;
-	size_t nr_pids = 1;
 	pid_t pid = 0;
+	pid_t *pids = &pid;
 
 	ckpt_dbg("forking child vpid %d flags %#x\n", child->pid, child->flags);
 
@@ -2067,29 +2086,76 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 		flags |= CLONE_PARENT;
 	}
 
+	memset(&clone_args, 0, sizeof(clone_args));
+	clone_args.nr_pids = 1;
 	/* select pid if --pids, otherwise it's 0 */
-	if (ctx->args->pids)
-		pid = child->pid;
+	if (ctx->args->pids) {
+		int i, depth = child->piddepth + 1;
 
-#ifdef CLONE_NEWPID
-	/* but for new pidns, don't specify a pid */
- 	if (child->flags & TASK_NEWPID) {
-		flags |= CLONE_NEWPID;
-		pid = 0;
-	}
+		clone_args.nr_pids = depth;
+		pids = malloc(sizeof(pid_t) * depth);
+		if (!pids) {
+			perror("ckpt_fork_child pids malloc");
+			return -1;
+		}
+
+		memset(pids, 0, sizeof(pid_t) * depth);
+		pids[0] = child->pid;
+		int j;
+		for (i = child->piddepth-1, j=0; i >= 0; i--, j++)
+			pids[j+1] = ctx->vpids_arr[child->vidx + j];
+
+#ifndef CLONE_NEWPID
+		if (child->piddepth > child->creator->piddepth) {
+			ckpt_err("nested pidns but CLONE_NEWPID undefined");
+			errno = -EINVAL;
+			return -1;
+		} else if (child->flags & TASK_NEWPID) {
+			ckpt_err("TASK_NEWPID set but CLONE_NEWPID undefined");
+			errno = -EINVAL;
+			return -1;
+		}
+#else /* CLONE_NEWPID */
+		if (child->piddepth > child->creator->piddepth) {
+			child->flags |= TASK_NEWPID;
+			flags |= CLONE_NEWPID;
+			clone_args.nr_pids--;
+		} else if (child->flags & TASK_NEWPID) {
+			/* The TASK_NEWPID could have been set for root task */
+			pids[0] = 0;
+			flags |= CLONE_NEWPID;
+		}
+		if (flags & CLONE_NEWPID && !ctx->args->pidns) {
+			ckpt_err("Must use --pidns for nested pidns container");
+			errno = -EINVAL;
+			return -1;
+		}
+#if 0
+		if (flags & CLONE_NEWPID)
+			clone_args.nr_pids--;
 #endif
+#endif /* CLONE_NEWPID */
+	}
 
 	if (child->flags & (TASK_SIBLING | TASK_THREAD))
 		child->real_parent = getppid();
 	else
 		child->real_parent = _getpid();
 
-	memset(&clone_args, 0, sizeof(clone_args));
 	clone_args.child_stack = (unsigned long)genstack_base(stk);
 	clone_args.child_stack_size = genstack_size(stk);
-	clone_args.nr_pids = nr_pids;
 
-	pid = eclone(ckpt_fork_stub, child, flags, &clone_args, &pid);
+	int who;
+
+	who = ((void *)child - (void *) &ctx->tasks_arr[0]) / sizeof(struct task);
+	ckpt_dbg("task %d forking with flags %lx numpids %d\n",
+		child->pid, flags, clone_args.nr_pids);
+	int i;
+	for (i=0; i<clone_args.nr_pids; i++)
+		ckpt_dbg("task %d pid[%d]=%d\n", child->pid, i, pids[i]);
+	pid = eclone(ckpt_fork_stub, child, flags, &clone_args, pids);
+	if (pids != &pid)
+		free(pids);
 	if (pid < 0) {
 		ckpt_perror("eclone");
 		genstack_release(stk);
@@ -2268,6 +2334,9 @@ static int ckpt_do_feeder(void *data)
 
 	if (ckpt_write_tree(ctx) < 0)
 		ckpt_abort(ctx, "write c/r tree");
+
+	if (ckpt_write_vpids(ctx) < 0)
+		ckpt_abort(ctx, "write vpids");
 
 	/* read rest -> write rest */
 	if (ctx->args->inspect)
@@ -2461,6 +2530,8 @@ static int ckpt_read_obj(struct ckpt_ctx *ctx,
 		errno = EINVAL;
 		return -1;
 	}
+	if (h->len == sizeof(*h))
+	return 0;
 	return ckpt_read(STDIN_FILENO, buf, h->len - sizeof(*h));
 }
 
@@ -2609,8 +2680,75 @@ static int ckpt_read_tree(struct ckpt_ctx *ctx)
 	}
 
 	ret = ckpt_read_obj_ptr(ctx, ctx->pids_arr, len, CKPT_HDR_BUFFER);
-	if (ret < 0)
+	if (ret < 0) {
 		free(ctx->pids_arr);
+		return ret;
+	}
+
+	return ret;
+}
+
+/* set the vpids pointers in all the tasks */
+static int assign_vpids(struct ckpt_ctx *ctx)
+{
+	int d, hidx, tidx;
+	struct task *t;
+
+	for (hidx = 0, tidx = 0; tidx < ctx->pids_nr; tidx++) {
+		t = &ctx->tasks_arr[tidx];
+		d = t->piddepth = ctx->pids_arr[tidx].depth;
+		if (!d) {
+			ckpt_dbg("task[%d].vidx = -1\n", tidx);
+			t->vidx = -1;
+			continue;
+		}
+		t->vidx = hidx;
+		ckpt_dbg("task[%d].vidx = %d (depth %d, rpid %d)\n",
+			tidx, hidx, t->piddepth, ctx->pids_arr[tidx].vpid);
+		int i;
+		for (i=0; i<t->piddepth; i++)
+			ckpt_dbg("task[%d].vpid[%d] = %d\n", tidx, i,
+				ctx->vpids_arr[hidx+i]);
+		hidx += d;
+		if (hidx > ctx->vpids_nr) {
+			ckpt_err("Error parsing vpids array");
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static int ckpt_read_vpids(struct ckpt_ctx *ctx)
+{
+	struct ckpt_hdr_vpids *h;
+	int len, ret;
+
+	h = (struct ckpt_hdr_vpids *) ctx->vpids;
+	ret = ckpt_read_obj_type(ctx, h, sizeof(*h), CKPT_HDR_VPIDS);
+	if (ret < 0)
+		return ret;
+
+	ckpt_dbg("number of vpids: %d\n", h->nr_vpids);
+
+	if (h->nr_vpids < 0) {
+		ckpt_err("invalid number of vpids %d", h->nr_vpids);
+		errno = EINVAL;
+		return -1;
+	}
+	ctx->vpids_nr = h->nr_vpids;
+	if (!ctx->vpids_nr)
+		return 0;
+
+	len = sizeof(__s32) * ctx->vpids_nr;
+
+	ctx->vpids_arr = malloc(len);
+	if (!ctx->pids_arr)
+		return -1;
+
+	ret = ckpt_read_obj_ptr(ctx, ctx->vpids_arr, len, CKPT_HDR_BUFFER);
+	if (ret < 0)
+		free(ctx->vpids_arr);
 
 	return ret;
 }
@@ -2681,6 +2819,25 @@ static int ckpt_write_tree(struct ckpt_ctx *ctx)
 	len = sizeof(struct ckpt_pids) * ctx->pids_nr;
 	if (ckpt_write_obj_ptr(ctx, ctx->pids_arr, len, CKPT_HDR_BUFFER) < 0)
 		ckpt_abort(ctx, "write pids");
+
+	return 0;
+}
+
+static int ckpt_write_vpids(struct ckpt_ctx *ctx)
+{
+	struct ckpt_hdr_vpids *h;
+	int len;
+
+	h = (struct ckpt_hdr_vpids *) ctx->vpids;
+	if (ckpt_write_obj(ctx, (struct ckpt_hdr *) h) < 0)
+		ckpt_abort(ctx, "write vpids hdr");
+
+	if (!ctx->vpids_nr)
+		return 0;
+	len = sizeof(__s32) * ctx->vpids_nr;
+	if (ckpt_write_obj_ptr(ctx, ctx->vpids_arr, len, CKPT_HDR_BUFFER) < 0)
+		ckpt_abort(ctx, "write vpids");
+	ckpt_dbg("wrote %d bytes for %d vpids\n", len, ctx->vpids_nr);
 
 	return 0;
 }

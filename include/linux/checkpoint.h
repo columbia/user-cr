@@ -14,7 +14,7 @@
  *  distribution for more details.
  */
 
-#define CHECKPOINT_VERSION 5
+#define CHECKPOINT_VERSION 6
 
 /* checkpoint user flags */
 #define CHECKPOINT_SUBTREE 0x1
