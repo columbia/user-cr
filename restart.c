@@ -570,7 +570,7 @@ int app_restart(struct app_restart_args *args)
 		ret = ckpt_coordinator_pidns(&ctx);
 	} else if (ctx.args->pidns) {
 		ckpt_dbg("new pidns with init\n");
-		ctx.tasks_arr[0].flags |= TASK_NEWPID;
+		ctx.tasks_arr[0].flags |= TASK_NEWPID | TASK_NEWNS;
 		if (global_send_sigint == -1)
 			global_send_sigint = SIGKILL;
 		ret = ckpt_coordinator(&ctx);
