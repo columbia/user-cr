@@ -111,8 +111,6 @@ enum {
 #define CKPT_HDR_GROUPINFO CKPT_HDR_GROUPINFO
 	CKPT_HDR_TASK_CREDS,
 #define CKPT_HDR_TASK_CREDS CKPT_HDR_TASK_CREDS
-	CKPT_HDR_VPIDS,
-#define CKPT_HDR_VPIDS CKPT_HDR_VPIDS
 
 	/* 201-299: reserved for arch-dependent */
 
@@ -340,12 +338,6 @@ struct ckpt_pids {
 	__s32 vpgid;
 	__s32 vsid;
 	__s32 depth; /* pid namespace depth relative to container init */
-} __attribute__((aligned(8)));
-
-/* number of vpids */
-struct ckpt_hdr_vpids {
-	struct ckpt_hdr h;
-	__s32 nr_vpids;
 } __attribute__((aligned(8)));
 
 /* pids */

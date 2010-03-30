@@ -1723,6 +1723,7 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 	unsigned long flags = SIGCHLD;
 	pid_t pid = 0;
 	pid_t *pids = &pid;
+	int i, j, depth;
 
 	ckpt_dbg("forking child vpid %d flags %#x\n", child->pid, child->flags);
 
@@ -1732,19 +1733,18 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 		return -1;
 	}
 
-	if (child->flags & TASK_THREAD) {
+	if (child->flags & TASK_THREAD)
 		flags |= CLONE_THREAD | CLONE_SIGHAND | CLONE_VM;
-	} else if (child->flags & TASK_SIBLING) {
+	else if (child->flags & TASK_SIBLING)
 		flags |= CLONE_PARENT;
-	}
 
 	memset(&clone_args, 0, sizeof(clone_args));
 	clone_args.nr_pids = 1;
 	/* select pid if --pids, otherwise it's 0 */
 	if (ctx->args->pids) {
-		int i, depth = child->piddepth + 1;
-
+		depth = child->piddepth + 1;
 		clone_args.nr_pids = depth;
+
 		pids = malloc(sizeof(pid_t) * depth);
 		if (!pids) {
 			perror("ckpt_fork_child pids malloc");
@@ -1753,9 +1753,9 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 
 		memset(pids, 0, sizeof(pid_t) * depth);
 		pids[0] = child->pid;
-		int j;
-		for (i = child->piddepth-1, j=0; i >= 0; i--, j++)
-			pids[j+1] = ctx->vpids_arr[child->vidx + j];
+
+		for (i = child->piddepth - 1, j = 0; i >= 0; i--, j++)
+			pids[j + 1] = ctx->vpids_arr[child->vidx + j];
 
 #ifndef CLONE_NEWPID
 		if (child->piddepth > child->creator->piddepth) {
@@ -1800,25 +1800,20 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 	clone_args.child_stack = (unsigned long)genstack_base(stk);
 	clone_args.child_stack_size = genstack_size(stk);
 
-	int who;
-
-	who = ((void *)child - (void *) &ctx->tasks_arr[0]) / sizeof(struct task);
 	ckpt_dbg("task %d forking with flags %lx numpids %d\n",
 		child->pid, flags, clone_args.nr_pids);
-	int i;
-	for (i=0; i<clone_args.nr_pids; i++)
+	for (i = 0; i < clone_args.nr_pids; i++)
 		ckpt_dbg("task %d pid[%d]=%d\n", child->pid, i, pids[i]);
+
 	pid = eclone(ckpt_fork_stub, child, flags, &clone_args, pids);
+	if (pid < 0)
+		ckpt_perror("eclone");
+
+	if (pid < 0 || !(child->flags & TASK_THREAD))
+		genstack_release(stk);
+
 	if (pids != &pid)
 		free(pids);
-	if (pid < 0) {
-		ckpt_perror("eclone");
-		genstack_release(stk);
-		return -1;
-	}
-
-	if (!(child->flags & TASK_THREAD))
-		genstack_release(stk);
 
 	ckpt_dbg("forked child vpid %d (asked %d)\n", pid, child->pid);
 	return pid;
@@ -2186,7 +2181,7 @@ static int ckpt_read_obj(struct ckpt_ctx *ctx,
 		return -1;
 	}
 	if (h->len == sizeof(*h))
-	return 0;
+		return 0;
 	return ckpt_read(STDIN_FILENO, buf, h->len - sizeof(*h));
 }
 
@@ -2376,26 +2371,28 @@ static int assign_vpids(struct ckpt_ctx *ctx)
 
 static int ckpt_read_vpids(struct ckpt_ctx *ctx)
 {
-	struct ckpt_hdr_vpids *h;
-	int len, ret;
+	int i, len, ret;
 
-	h = (struct ckpt_hdr_vpids *) ctx->vpids;
-	ret = ckpt_read_obj_type(ctx, h, sizeof(*h), CKPT_HDR_VPIDS);
-	if (ret < 0)
-		return ret;
+	for (i = 0; i < ctx->pids_nr; i++)
+		ctx->vpids_nr += ctx->pids_arr[i].depth;
 
-	ckpt_dbg("number of vpids: %d\n", h->nr_vpids);
+	ckpt_dbg("number of vpids: %d\n", ctx->vpids_nr);
 
-	if (h->nr_vpids < 0) {
-		ckpt_err("invalid number of vpids %d", h->nr_vpids);
-		errno = EINVAL;
+	if (ctx->vpids_nr < 0) {
+		ckpt_err("Invalid number of vpids %d", ctx->vpids_nr);
+		errno = -EINVAL;
 		return -1;
 	}
-	ctx->vpids_nr = h->nr_vpids;
+
 	if (!ctx->vpids_nr)
 		return 0;
 
 	len = sizeof(__s32) * ctx->vpids_nr;
+	if (len < 0) {
+		ckpt_err("Length of vpids array overflowed");
+		errno = -EINVAL;
+		return -1;
+	}
 
 	ctx->vpids_arr = malloc(len);
 	if (!ctx->pids_arr)
@@ -2480,12 +2477,7 @@ static int ckpt_write_tree(struct ckpt_ctx *ctx)
 
 static int ckpt_write_vpids(struct ckpt_ctx *ctx)
 {
-	struct ckpt_hdr_vpids *h;
 	int len;
-
-	h = (struct ckpt_hdr_vpids *) ctx->vpids;
-	if (ckpt_write_obj(ctx, (struct ckpt_hdr *) h) < 0)
-		ckpt_abort(ctx, "write vpids hdr");
 
 	if (!ctx->vpids_nr)
 		return 0;
