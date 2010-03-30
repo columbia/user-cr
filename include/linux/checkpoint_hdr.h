@@ -177,6 +177,12 @@ enum {
 #define CKPT_HDR_SOCKET_UNIX CKPT_HDR_SOCKET_UNIX
 	CKPT_HDR_SOCKET_INET,
 #define CKPT_HDR_SOCKET_INET CKPT_HDR_SOCKET_INET
+	CKPT_HDR_NET_NS,
+#define CKPT_HDR_NET_NS CKPT_HDR_NET_NS
+	CKPT_HDR_NETDEV,
+#define CKPT_HDR_NETDEV CKPT_HDR_NETDEV
+	CKPT_HDR_NETDEV_ADDR,
+#define CKPT_HDR_NETDEV_ADDR CKPT_HDR_NETDEV_ADDR
 
 	CKPT_HDR_TAIL = 9001,
 #define CKPT_HDR_TAIL CKPT_HDR_TAIL
@@ -249,6 +255,10 @@ enum obj_type {
 #define CKPT_OBJ_SECURITY_PTR CKPT_OBJ_SECURITY_PTR
 	CKPT_OBJ_SECURITY,
 #define CKPT_OBJ_SECURITY CKPT_OBJ_SECURITY
+	CKPT_OBJ_NET_NS,
+#define CKPT_OBJ_NET_NS CKPT_OBJ_NET_NS
+	CKPT_OBJ_NETDEV,
+#define CKPT_OBJ_NETDEV CKPT_OBJ_NETDEV
 	CKPT_OBJ_MAX
 #define CKPT_OBJ_MAX CKPT_OBJ_MAX
 };
@@ -323,14 +333,13 @@ struct ckpt_hdr_tree {
 } __attribute__((aligned(8)));
 
 struct ckpt_pids {
-	/* these pids are in root_nsproxy's pid ns */
+	/* These pids are in the root_nsproxy's pid ns */
 	__s32 vpid;
 	__s32 vppid;
 	__s32 vtgid;
 	__s32 vpgid;
 	__s32 vsid;
-	__s32 rsid; /* real pid - in checkpointer's pid_ns */
-	__s32 depth; /* pidns depth */
+	__s32 depth; /* pid namespace depth relative to container init */
 } __attribute__((aligned(8)));
 
 /* number of vpids */
@@ -434,6 +443,7 @@ struct ckpt_hdr_ns {
 	struct ckpt_hdr h;
 	__s32 uts_objref;
 	__s32 ipc_objref;
+	__s32 net_objref;
 } __attribute__((aligned(8)));
 
 /* cannot include <linux/tty.h> from userspace, so define: */
@@ -750,6 +760,53 @@ struct ckpt_hdr_socket_inet {
 struct ckpt_hdr_file_socket {
 	struct ckpt_hdr_file common;
 	__s32 sock_objref;
+} __attribute__((aligned(8)));
+
+struct ckpt_hdr_netns {
+	struct ckpt_hdr h;
+	__s32 this_ref;
+} __attribute__((aligned(8)));
+
+enum ckpt_netdev_types {
+	CKPT_NETDEV_LO,
+	CKPT_NETDEV_VETH,
+	CKPT_NETDEV_SIT,
+	CKPT_NETDEV_MACVLAN,
+	CKPT_NETDEV_MAX,
+};
+
+struct ckpt_hdr_netdev {
+	struct ckpt_hdr h;
+	__s32 netns_ref;
+	union {
+		struct {
+			__s32 this_ref;
+			__s32 peer_ref;
+		} veth;
+		struct {
+			__u32 mode;
+		} macvlan;
+	};
+	__u32 inet_addrs;
+	__u16 type;
+	__u16 flags;
+	__u8 hwaddr[6];
+} __attribute__((aligned(8)));
+
+enum ckpt_netdev_addr_types {
+	CKPT_NETDEV_ADDR_IPV4,
+};
+
+struct ckpt_netdev_addr {
+	__u16 type;
+	union {
+		struct {
+			__be32 inet4_local;
+			__be32 inet4_address;
+			__be32 inet4_mask;
+			__be32 inet4_broadcast;
+		};
+	} __attribute__((aligned(8)));
 } __attribute__((aligned(8)));
 
 struct ckpt_hdr_eventpoll_items {
