@@ -240,6 +240,7 @@ static void parse_args(struct app_restart_args *args, int argc, char *argv[])
 			break;
 		case 'F':
 			args->freezer = optarg;
+			args->keep_frozen = 1;
 			break;
 		case 9:
 			args->warn |= cond_to_mask(&opts[optind].name[5]);

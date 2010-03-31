@@ -1,3 +1,5 @@
+#include <linux/checkpoint.h>
+#include <linux/checkpoint_hdr.h>
 
 struct app_checkpoint_args {
 	int outfd;
@@ -19,6 +21,7 @@ struct app_restart_args {
 	int show_status;
 	int copy_status;
 	char *freezer;
+	int keep_frozen;
 	int infd;
 	int klogfd;
 	int ulogfd;

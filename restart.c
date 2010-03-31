@@ -914,7 +914,7 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 	if (ckpt_probe_child(root_pid, "root task") < 0)
 		exit(1);
 
-	if (ctx->args->freezer)
+	if (ctx->args->keep_frozen)
 		flags |= RESTART_FROZEN;
 	if (ctx->args->keep_lsm)
 		flags |= RESTART_KEEP_LSM;
