@@ -145,6 +145,7 @@ static void parse_args(struct app_checkpoint_args *args, int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
+	int ret;
 	struct app_checkpoint_args args;
 	unsigned long flags = 0;
 	pid_t pid;
@@ -167,5 +168,6 @@ int main(int argc, char *argv[])
 	if (!args.container)
 		flags |= CHECKPOINT_SUBTREE;
 
-	return app_checkpoint(pid, flags, &args);
+	ret = app_checkpoint(pid, flags, &args);
+	return (ret > 0) ? 0 : 1;
 }

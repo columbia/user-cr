@@ -55,5 +55,5 @@ int app_checkpoint(int pid, unsigned long flags,
 		ckpt_err("checkpoint id %d\n", ret);
 	}
 
-	return (ret > 0 ? 0 : 1);
+	return ret;
 }
