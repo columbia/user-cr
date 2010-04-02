@@ -7,6 +7,7 @@ struct app_checkpoint_args {
 	int uerrfd;
 	int container;
 	int verbose;
+	int flags;
 };
 
 struct app_restart_args {

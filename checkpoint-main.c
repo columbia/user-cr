@@ -30,6 +30,7 @@ static char usage_str[] =
 "  -l,--logfile=FILE     write error and debug data to FILE (default=none)\n"
 "     --logile-fd=FD     write error and debug data to file descriptor FD\n"
 "  -c,--container        require the PID is a container-init\n"
+"  -N,--netns            checkpoint network namespace(s)\n"
 "  -v,--verbose          verbose output\n"
 "";
 
@@ -61,9 +62,10 @@ static void parse_args(struct app_checkpoint_args *args, int argc, char *argv[])
 		{ "logfile-fd",	required_argument,	NULL, 2 },
 		{ "container",	no_argument,		NULL, 'c' },
 		{ "verbose",	no_argument,		NULL, 'v' },
+		{ "netns",	no_argument,		NULL, 'N' },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hvco:l:";
+	static char optc[] = "hvco:l:N";
 	char *output;
 	char *logfile;
 
@@ -108,6 +110,9 @@ static void parse_args(struct app_checkpoint_args *args, int argc, char *argv[])
 			break;
 		case 'v':
 			args->verbose = 1;
+			break;
+		case 'N':
+			args->flags |= CHECKPOINT_NETNS;
 			break;
 		default:
 			usage(usage_str);
@@ -165,6 +170,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+	flags = args.flags;
 	if (!args.container)
 		flags |= CHECKPOINT_SUBTREE;
 
