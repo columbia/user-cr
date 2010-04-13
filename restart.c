@@ -68,24 +68,6 @@
  * of the checkpoint image stream.
  */
 
-static struct signal_array signal_array[] = INIT_SIGNAL_ARRAY;
-
-static char *sig2str(int sig)
-{
-	int i = 0;
-
-	do {
-		if (signal_array[i].signum == sig)
-			return signal_array[i].sigstr;
-	} while (signal_array[++i].signum >= 0);
-	return "UNKNOWN SIGNAL";
-}
-
-inline static int restart(pid_t pid, int fd, unsigned long flags, int klogfd)
-{
-	return syscall(__NR_restart, pid, fd, flags, klogfd);
-}
-
 struct hashent {
 	long key;
 	void *data;
@@ -167,6 +149,11 @@ struct ckpt_ctx {
 	char *freezer;
 };
 
+struct pid_swap {
+	pid_t old;
+	pid_t new;
+};
+
 /*
  * TODO: Do we need to direct user-space restart messages to two different
  * 	 fds (like stdout and stderr) or can we just use one ?
@@ -179,6 +166,7 @@ static pid_t global_child_pid;
 static int global_child_status;
 static int global_child_collected;
 static int global_sent_sigint;
+static struct signal_array signal_array[] = INIT_SIGNAL_ARRAY;
 
 /*
  * TODO: Implement an API to let callers choose if/how an interrupt be sent
@@ -244,10 +232,10 @@ static inline pid_t _getpid(void)
 	return syscall(__NR_getpid);
 }
 
-struct pid_swap {
-	pid_t old;
-	pid_t new;
-};
+static inline int restart(pid_t pid, int fd, unsigned long flags, int klogfd)
+{
+	return syscall(__NR_restart, pid, fd, flags, klogfd);
+}
 
 static inline int ckpt_cond_warn(struct ckpt_ctx *ctx, long mask)
 {
@@ -274,6 +262,17 @@ static void report_exit_status(int status, char *str, int debug)
 		ckpt_dbg("%s\n", msg);
 	else
 		ckpt_err("%s\n", msg);
+}
+
+static char *sig2str(int sig)
+{
+	int i = 0;
+
+	do {
+		if (signal_array[i].signum == sig)
+			return signal_array[i].sigstr;
+	} while (signal_array[++i].signum >= 0);
+	return "UNKNOWN SIGNAL";
 }
 
 static void sigchld_handler(int sig)
