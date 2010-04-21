@@ -182,8 +182,8 @@ static int image_read_obj(int fd, struct ckpt_hdr **hh)
 	if (ret == 0)
 		return 0;
 
-	VERBOSE("info: [@%lu] object %s len %d\n",
-		__filepos, hdr_to_str(h.type), h.len);
+	VERBOSE("info: [@%lu] object %3d %s len %d\n",
+		__filepos, h.type, hdr_to_str(h.type), h.len);
 
 	p = malloc(h.len);
 	if (!p) {
