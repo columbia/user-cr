@@ -18,7 +18,7 @@
 
 /* checkpoint user flags */
 #define CHECKPOINT_SUBTREE 0x1
-#define CHECKPOINT_NONETNS 0x2
+#define CHECKPOINT_NETNS 0x2
 
 /* restart user flags */
 #define RESTART_TASKSELF 0x1
