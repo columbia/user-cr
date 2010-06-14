@@ -157,14 +157,22 @@ static int __image_read(int fd, void *buf, int len)
 		nread = read(fd, buf, nleft);
 		if (nread < 0 && errno == -EAGAIN)
 			continue;
-		if (nread < 0)
-			return -1;
-		if (nread == 0) {
-			VERBOSE("info: reached end of file\n");
-			return 0;
-		}
+		if (nread <= 0)
+			break;
 		buf += nread;
 	}
+
+	if (nread < 0) {
+		perror("read from image");
+		return -1;
+	}
+
+	if (nleft && nleft != len) {
+		fprintf(stderr, "unexpected end of file (read %d of %d)\n",
+			len - nleft, len);
+		return -1;
+	}
+
 	__filepos += len;
 	return len;
 }
@@ -175,12 +183,8 @@ static int image_read_obj(int fd, struct ckpt_hdr **hh)
 	int ret;
 
 	ret = __image_read(fd, &h, sizeof(h));
-	if (ret < 0) {
-		perror("read from image");
+	if (ret <= 0)
 		return ret;
-	}
-	if (ret == 0)
-		return 0;
 
 	VERBOSE("info: [@%lu] object %3d %s len %d\n",
 		__filepos, h.type, hdr_to_str(h.type), h.len);
@@ -194,8 +198,7 @@ static int image_read_obj(int fd, struct ckpt_hdr **hh)
 	*p = h;
 
 	ret = __image_read(fd, (p + 1), h.len - sizeof(h));
-	if (ret < 0) {
-		perror("read from image");
+	if (ret <= 0) {
 		free(p);
 		return -1;
 	}
@@ -338,12 +341,10 @@ static int image_parse_error(struct ckpt_hdr *h, int fd, struct args *args)
 	}
 
 	len = image_read_obj(fd, &p);
-	if (len < 0)
-		return len;
-	if (len == 0) {
-		fprintf(stderr, "unexpected end of file");
+	if (len == 0)
+		fprintf(stderr, "error object: unexpected end of file");
+	if (len <= 0)
 		return -1;
-	}
 
 	if (p->type != CKPT_HDR_STRING) {
 		fprintf(stderr, "unexpected header type %d\n", p->type);
