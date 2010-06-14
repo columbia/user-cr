@@ -31,8 +31,7 @@ inline static int checkpoint(pid_t pid, int fd, unsigned long flags, int logfd)
 	return syscall(__NR_checkpoint, pid, fd, flags, logfd);
 }
 
-int cr_checkpoint(int pid, unsigned long flags,
-		  struct cr_checkpoint_args *args)
+int cr_checkpoint(int pid, struct cr_checkpoint_args *args)
 {
 	int ret;
 
@@ -46,7 +45,10 @@ int cr_checkpoint(int pid, unsigned long flags,
 	if (args->logfd < 0)
 		args->logfd = CHECKPOINT_FD_NONE;
 
-	ret = checkpoint(pid, args->outfd, flags, args->logfd);
+	if (!args->container)
+		args->flags |= CHECKPOINT_SUBTREE;
+
+	ret = checkpoint(pid, args->outfd, args->flags, args->logfd);
 
 	if (ret < 0) {
 		ckpt_perror("checkpoint");

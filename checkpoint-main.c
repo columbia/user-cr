@@ -152,7 +152,6 @@ int main(int argc, char *argv[])
 {
 	int ret;
 	struct cr_checkpoint_args args;
-	unsigned long flags = 0;
 	pid_t pid;
 
 	global_uerrfd = fileno(stderr);
@@ -170,10 +169,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	flags = args.flags;
-	if (!args.container)
-		flags |= CHECKPOINT_SUBTREE;
+	ret = cr_checkpoint(pid, &args);
 
-	ret = cr_checkpoint(pid, flags, &args);
 	return (ret > 0) ? 0 : 1;
 }

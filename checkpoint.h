@@ -40,7 +40,5 @@ struct cr_restart_args {
  */
 extern int global_send_sigint;
 
-extern int cr_checkpoint(int pid, unsigned long flags,
-			 struct cr_checkpoint_args *args);
-
+extern int cr_checkpoint(int pid, struct cr_checkpoint_args *args);
 extern int cr_restart(struct cr_restart_args *args);
