@@ -28,6 +28,7 @@ static char usage_str[] =
 "\tOptions:\n"
 "\t -h,--help             print this help message\n"
 "\t -e,--error            show error messages\n"
+"\t -p,--pids             show the process tree\n"
 "\t -v,--verbose          verbose output\n"
 "\t    --show-arch-regs   show registers contents\n"
 "";
@@ -36,6 +37,7 @@ struct args {
 	int error;
 	int verbose;
 	int show_arch_regs;
+	int show_task_tree;
 };
 
 int __verbose;
@@ -54,6 +56,7 @@ static int image_parse(int fd, struct args *args);
 static int image_parse_vma(struct ckpt_hdr *h, int fd, struct args *args);
 static int image_parse_file(struct ckpt_hdr *h, int fd, struct args *args);
 static int image_parse_objref(struct ckpt_hdr *h, int fd, struct args *args);
+static int image_parse_tree(struct ckpt_hdr *h, int fd, struct args *args);
 static int image_parse_error(struct ckpt_hdr *h, int fd, struct args *args);
 
 #ifdef __i386__
@@ -85,10 +88,11 @@ static void parse_args(struct args *args, int argc, char *argv[])
 		{ "help",	no_argument,		NULL, 'h' },
 		{ "error",	no_argument,		NULL, 'e' },
 		{ "verbose",	no_argument,		NULL, 'v' },
+		{ "pids-only",	no_argument,		NULL, 'p' },
 		{ "show-arch-regs",	no_argument,	NULL, 1 },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hve";
+	static char optc[] = "hvep";
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, NULL);
@@ -101,6 +105,9 @@ static void parse_args(struct args *args, int argc, char *argv[])
 			usage(usage_str);
 		case 'e':
 			args->error = 1;
+			break;
+		case 'p':
+			args->show_task_tree = 1;
 			break;
 		case 'v':
 			args->verbose = 1;
@@ -222,6 +229,9 @@ static int image_parse(int fd, struct args *args)
 		case CKPT_HDR_OBJREF:
 			ret = image_parse_objref(h, fd, args);
 			break;
+		case CKPT_HDR_TREE:
+			ret = image_parse_tree(h, fd, args);
+			break;
 		case CKPT_HDR_FILE:
 			ret = image_parse_file(h, fd, args);
 			break;
@@ -239,6 +249,38 @@ static int image_parse(int fd, struct args *args)
 	} while (ret > 0);
 
 	return ret;
+}
+
+static int image_parse_tree(struct ckpt_hdr *h, int fd, struct args *args)
+{
+	struct ckpt_hdr_tree *hh;
+	struct ckpt_pids *pp;
+	int nr_tasks;
+	int i, ret;
+
+	hh = (struct ckpt_hdr_tree *) h;
+	nr_tasks = hh->nr_tasks;
+	free(h);
+
+	ret = image_read_obj(fd, &h);
+	if (ret == 0)
+		fprintf(stderr, "process tree: unexpected end of file");
+	if (ret <= 0)
+		return -1;
+
+	pp =  (struct ckpt_pids *) h;
+
+	if (args->show_task_tree) {
+		for (i = 0; i < nr_tasks; i++) {
+			printf("Task %d: pid %d ppid %d tgid %d"
+				"pgid %d sid %d depth %d\n",
+				i, pp[i].vpid, pp[i].vppid, pp[i].vtgid,
+				pp[i].vpgid, pp[i].vsid, pp[i].depth);
+		}
+	}
+	free(h);
+
+	return 0;
 }
 
 static int image_parse_objref(struct ckpt_hdr *h, int fd, struct args *args)
