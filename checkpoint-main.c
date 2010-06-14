@@ -9,7 +9,7 @@
 
 #include <linux/checkpoint.h>
 
-#include "app-checkpoint.h"
+#include "checkpoint.h"
 #include "common.h"
 
 static int global_uerrfd = -1;
@@ -52,7 +52,7 @@ static int str2num(char *str)
 	return num;
 }
 
-static void parse_args(struct app_checkpoint_args *args, int argc, char *argv[])
+static void parse_args(struct cr_checkpoint_args *args, int argc, char *argv[])
 {
 	static struct option opts[] = {
 		{ "help",	no_argument,		NULL, 'h' },
@@ -151,7 +151,7 @@ static void parse_args(struct app_checkpoint_args *args, int argc, char *argv[])
 int main(int argc, char *argv[])
 {
 	int ret;
-	struct app_checkpoint_args args;
+	struct cr_checkpoint_args args;
 	unsigned long flags = 0;
 	pid_t pid;
 
@@ -174,6 +174,6 @@ int main(int argc, char *argv[])
 	if (!args.container)
 		flags |= CHECKPOINT_SUBTREE;
 
-	ret = app_checkpoint(pid, flags, &args);
+	ret = cr_checkpoint(pid, flags, &args);
 	return (ret > 0) ? 0 : 1;
 }

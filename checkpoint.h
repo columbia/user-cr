@@ -1,7 +1,7 @@
 #include <linux/checkpoint.h>
 #include <linux/checkpoint_hdr.h>
 
-struct app_checkpoint_args {
+struct cr_checkpoint_args {
 	int outfd;
 	int logfd;
 	int uerrfd;
@@ -10,7 +10,7 @@ struct app_checkpoint_args {
 	int flags;
 };
 
-struct app_restart_args {
+struct cr_restart_args {
 	int self;
 	int pids;
 	int pidns;
@@ -40,7 +40,7 @@ struct app_restart_args {
  */
 extern int global_send_sigint;
 
-extern int app_checkpoint(int pid, unsigned long flags,
-				struct app_checkpoint_args *args);
+extern int cr_checkpoint(int pid, unsigned long flags,
+			 struct cr_checkpoint_args *args);
 
-extern int app_restart(struct app_restart_args *args);
+extern int cr_restart(struct cr_restart_args *args);

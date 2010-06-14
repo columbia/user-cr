@@ -52,7 +52,7 @@ $(LIB_ECLONE):
 # restart needs to be thread-safe
 restart: CFLAGS += -D__REENTRANT -pthread
 
-$(CR_OBJS): common.h app-checkpoint.h
+$(CR_OBJS): common.h checkpoint.h
 
 restart: restart.o restart-main.o
 

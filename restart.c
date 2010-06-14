@@ -40,7 +40,7 @@
 #include "eclone.h"
 #include "genstack.h"
 #include "compat.h"
-#include "app-checkpoint.h"
+#include "checkpoint.h"
 #include "common.h"
 
 /*
@@ -162,7 +162,7 @@ struct ckpt_ctx {
 	char tree[BUFSIZE];
 	char vpids[BUFSIZE];
 	char buf[BUFSIZE];
-	struct app_restart_args *args;
+	struct cr_restart_args *args;
 
 	char *freezer;
 };
@@ -395,7 +395,7 @@ static int freezer_register(struct ckpt_ctx *ctx, pid_t pid)
  * Validate the specified arguments and initialize globals based on the
  * arguments. Return 0 on success.
  */
-int process_args(struct app_restart_args *args)
+int process_args(struct cr_restart_args *args)
 {
 	global_debug = args->debug;
 	global_verbose = args->verbose;
@@ -458,7 +458,7 @@ int process_args(struct app_restart_args *args)
 	return 0;
 }
 
-int app_restart(struct app_restart_args *args)
+int cr_restart(struct cr_restart_args *args)
 {
 	struct ckpt_ctx ctx;
 	int ret;

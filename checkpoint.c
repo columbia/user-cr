@@ -21,7 +21,7 @@
 
 #include <linux/checkpoint.h>
 
-#include "app-checkpoint.h"
+#include "checkpoint.h"
 #include "common.h"
 
 static int global_uerrfd = -1;
@@ -31,8 +31,8 @@ inline static int checkpoint(pid_t pid, int fd, unsigned long flags, int logfd)
 	return syscall(__NR_checkpoint, pid, fd, flags, logfd);
 }
 
-int app_checkpoint(int pid, unsigned long flags,
-				struct app_checkpoint_args *args)
+int cr_checkpoint(int pid, unsigned long flags,
+		  struct cr_checkpoint_args *args)
 {
 	int ret;
 

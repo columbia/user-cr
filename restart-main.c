@@ -8,7 +8,7 @@
 #include <limits.h>
 #include <getopt.h>
 
-#include "app-checkpoint.h"
+#include "checkpoint.h"
 #include "common.h"
 
 static int global_ulogfd;
@@ -105,7 +105,7 @@ static int str2sig(char *str)
 	return -1;
 }
 
-static void parse_args(struct app_restart_args *args, int argc, char *argv[])
+static void parse_args(struct cr_restart_args *args, int argc, char *argv[])
 {
 	static struct option opts[] = {
 		{ "help",	no_argument,		NULL, 'h' },
@@ -299,7 +299,7 @@ static void parse_args(struct app_restart_args *args, int argc, char *argv[])
 int main(int argc, char *argv[])
 {
 	int ret;
-	struct app_restart_args args;
+	struct cr_restart_args args;
 
 	/*
 	 * Initialize the log/error fds early so even parse_args() errors
@@ -312,7 +312,7 @@ int main(int argc, char *argv[])
 
 	parse_args(&args, argc, argv);
 
-	ret = app_restart(&args);
+	ret = cr_restart(&args);
 	if (ret > 0)
 		ret = 0;
 
