@@ -1,3 +1,9 @@
+# handle cross-compilation
+AR  := ${CROSS_COMPILE}ar
+AS  := ${CROSS_COMPILE}as
+CC  := ${CROSS_COMPILE}gcc
+CPP := ${CROSS_COMPILE}cpp
+LD  := ${CROSS_COMPILE}ld
 
 # extra warnings and fun
 WARNS := -Wall -Wstrict-prototypes -Wno-trigraphs

@@ -25,6 +25,14 @@
 #    define __NR_unshare 303
 #elif __powerpc__
 #    define __NR_unshare 282
+#elif __arm__
+#    define __NR_OABI_SYSCALL_BASE 0x900000
+#    if defined(__thumb__) || defined(__ARM_EABI__)
+#        define __NR_SYSCALL_BASE 0
+#    else
+#        define __NR_SYSCALL_BASE __NR_OABI_SYSCALL_BASE
+#    endif
+#    define __NR_unshare (__NR_SYSCALL_BASE+337)
 #else
 #    error "Architecture not supported"
 #endif

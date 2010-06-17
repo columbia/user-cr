@@ -18,6 +18,13 @@ CR_OBJS = checkpoint.o checkpoint-main.o restart.o restart-main.o
 # detect architecture (for eclone)
 SUBARCH ?= $(patsubst i%86,x86_32,$(shell uname -m))
 
+# handle cross-compilation
+AR  := ${CROSS_COMPILE}ar
+AS  := ${CROSS_COMPILE}as
+CC  := ${CROSS_COMPILE}gcc
+CPP := ${CROSS_COMPILE}cpp
+LD  := ${CROSS_COMPILE}ld
+
 # compile with debug ?
 DEBUG = -DCHECKPOINT_DEBUG
 
@@ -75,6 +82,11 @@ ifeq ($(SUBARCH),ppc64)
 CFLAGS += -m64
 ASFLAGS += -m64
 $(LIB_ECLONE): clone_$(SUBARCH)_.o
+endif
+
+# also on ARM, need also assembly file
+ifeq ($(SUBARCH),arm)
+$(LIB_ECLONE): eclone_$(SUBARCH)_.o
 endif
 
 # ckptinfo dependencies

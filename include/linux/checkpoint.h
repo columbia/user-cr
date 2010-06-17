@@ -31,7 +31,25 @@
 #define CHECKPOINT_FD_NONE -1
 
 
-#if __powerpc__
+#if __arm__
+
+#	define __NR_OABI_SYSCALL_BASE 0x900000
+#	if defined(__thumb__) || defined(__ARM_EABI__)
+#		define __NR_SYSCALL_BASE	0
+#	else
+#		define __NR_SYSCALL_BASE	__NR_OABI_SYSCALL_BASE
+#	endif
+
+
+#	ifndef __NR_checkpoint
+#		define __NR_checkpoint (__NR_SYSCALL_BASE+367)
+#	endif
+
+#	ifndef __NR_restart
+#		define __NR_restart (__NR_SYSCALL_BASE+368)
+#	endif
+
+#elif __powerpc__
 
 #	ifndef __NR_checkpoint
 #		define __NR_checkpoint 324

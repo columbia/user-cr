@@ -7,7 +7,7 @@
 /*
  *  Generic container checkpoint-restart
  *
- *  Copyright (C) 2008-2009 Oren Laadan
+ *  Copyright (C) 2008-2010 Oren Laadan
  *
  *  This file is subject to the terms and conditions of the GNU General Public
  *  License.  See the file COPYING in the main directory of the Linux
@@ -17,6 +17,7 @@
 #include <sys/types.h>
 #include <linux/types.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/un.h>
 #include <netinet/in.h>
 
@@ -202,6 +203,8 @@ enum {
 #define CKPT_ARCH_PPC32 CKPT_ARCH_PPC32
 	CKPT_ARCH_PPC64,
 #define CKPT_ARCH_PPC64 CKPT_ARCH_PPC64
+	CKPT_ARCH_ARM,
+#define CKPT_ARCH_ARM CKPT_ARCH_ARM
 };
 
 /* shared objrects (objref) */
