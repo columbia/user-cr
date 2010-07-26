@@ -154,6 +154,8 @@ struct pid_swap {
 	pid_t new;
 };
 
+#define CKPT_RESERVED_PIDS 300  /* in the spirit of kernel/pid.c */
+
 /*
  * TODO: Do we need to direct user-space restart messages to two different
  * 	 fds (like stdout and stderr) or can we just use one ?
@@ -464,6 +466,7 @@ int cr_restart(struct cr_restart_args *args)
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.args = args;
+	ctx.tasks_pid = CKPT_RESERVED_PIDS;
 
 	ret = process_args(args);
 	if (ret < 0)
@@ -1109,7 +1112,7 @@ static int ckpt_alloc_pid(struct ckpt_ctx *ctx)
 	 */
 	do {
 		if (ctx->tasks_pid == INT_MAX)
-			ctx->tasks_pid = 2;
+			ctx->tasks_pid = CKPT_RESERVED_PIDS;
 		else
 			ctx->tasks_pid++;
 
