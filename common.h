@@ -1,31 +1,28 @@
 #include <stdio.h>
 #include <signal.h>
 
-#define BUFSIZE  (4 * 4096)
+#define BUFSIZE  (4096)
 
 static inline void ckpt_msg(int fd, char *format, ...)
 {
+	char buf[BUFSIZE];
 	va_list ap;
-	char *bufp;
+
 	if (fd < 0)
 		return;
 
 	va_start(ap, format);
-
-	bufp = malloc(BUFSIZE);
-	if(bufp) {
-		vsnprintf(bufp, BUFSIZE, format, ap);
-		write(fd, bufp, strlen(bufp));
-	}
-	free(bufp);
-
+	vsnprintf(buf, BUFSIZE, format, ap);
 	va_end(ap);
+
+	write(fd, buf, strlen(buf));
 }
 
-#define ckpt_perror(s) 							\
-	do {								\
-		ckpt_msg(global_uerrfd, s);				\
-		ckpt_msg(global_uerrfd, ": %s\n", strerror(errno));	\
+#define ckpt_perror(s)						\
+	do {							\
+		char __buf[256];				\
+		strerror_r(errno, __buf, 256);			\
+		ckpt_msg(global_uerrfd, "%s: %s\n", s, __buf);	\
 	} while (0)
 
 #ifdef CHECKPOINT_DEBUG

@@ -740,6 +740,11 @@ static int ckpt_probe_child(pid_t pid, char *str)
 {
 	int status, ret;
 
+	/*
+	 * TODO: below we use strerror(); see discussion at:
+	 * https://lists.linux-foundation.org/pipermail/containers/2010-August/025165.html
+	 */
+
 	/* use waitpid() to probe that a child is still alive */
 	ret = waitpid(pid, &status, WNOHANG);
 	if (ret == pid) {
