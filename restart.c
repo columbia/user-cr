@@ -1780,14 +1780,10 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 			flags |= CLONE_NEWPID;
 		}
 		if (flags & CLONE_NEWPID && !ctx->args->pidns) {
-			ckpt_err("Must use --pidns for nested pidns container");
+			ckpt_err("need --pidns for nested pidns container");
 			errno = -EINVAL;
 			return -1;
 		}
-#if 0
-		if (flags & CLONE_NEWPID)
-			clone_args.nr_pids--;
-#endif
 #endif /* CLONE_NEWPID */
 	}
 
@@ -2375,16 +2371,25 @@ static int ckpt_read_vpids(struct ckpt_ctx *ctx)
 {
 	int i, len, ret;
 
-	for (i = 0; i < ctx->pids_nr; i++)
+	for (i = 0; i < ctx->pids_nr; i++) {
+		if (ctx->pids_arr[i].depth < 0) {
+			ckpt_err("Invalid depth %d for pid %d",
+				 ctx->pids_arr[i].depth,
+				 ctx->tasks_arr[i].pid);
+			errno = -EINVAL;
+			return -1;
+		}
+
 		ctx->vpids_nr += ctx->pids_arr[i].depth;
 
-	ckpt_dbg("number of vpids: %d\n", ctx->vpids_nr);
-
-	if (ctx->vpids_nr < 0) {
-		ckpt_err("Invalid number of vpids %d", ctx->vpids_nr);
-		errno = -EINVAL;
-		return -1;
+		if(ctx->vpids_nr < 0) {
+			ckpt_err("Number of vpids overflowed");
+			errno = -E2BIG;
+			return -1;
+		}
 	}
+
+	ckpt_dbg("number of vpids: %d\n", ctx->vpids_nr);
 
 	if (!ctx->vpids_nr)
 		return 0;
