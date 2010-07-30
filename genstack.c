@@ -34,7 +34,11 @@ struct genstack *genstack_alloc(size_t sz)
 	if (sz == 0)
 		return NULL;
 
-	stk = malloc(sizeof(*stk));
+	/*
+	 * This is clearly an overkill; however, we must not use
+	 * malloc because it may not be thread-safe!
+	 */
+	stk = mmap(NULL, page_size(), mmap_prot, mmap_flags, -1, 0);
 	if (!stk)
 		return NULL;
 
@@ -43,7 +47,7 @@ struct genstack *genstack_alloc(size_t sz)
 
 	addr = mmap(NULL, sz, mmap_prot, mmap_flags, -1, 0);
 	if (addr == MAP_FAILED) {
-		free(stk);
+		munmap(stk->addr, page_size());
 		return NULL;
 	}
 
@@ -61,7 +65,7 @@ struct genstack *genstack_alloc(size_t sz)
 void genstack_release(struct genstack *stk)
 {
 	munmap(stk->addr, stk->size);
-	free(stk);
+	munmap(stk, page_size());
 }
 
 /* Return the size of the usable stack region.  Suitable for providing
