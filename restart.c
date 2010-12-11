@@ -1744,6 +1744,13 @@ static pid_t ckpt_fork_child(struct ckpt_ctx *ctx, struct task *child)
 		flags |= CLONE_THREAD | CLONE_SIGHAND | CLONE_VM;
 	else if (child->flags & TASK_SIBLING)
 		flags |= CLONE_PARENT;
+	else if (child->flags & (TASK_GHOST|TASK_DEAD)) {
+		/*
+		 * Ghosts must vanish silently (without signalling parent)
+		 * when they are done.
+		 */
+		flags = 0xFF;
+	}
 
 	memset(&clone_args, 0, sizeof(clone_args));
 	clone_args.nr_pids = 1;
