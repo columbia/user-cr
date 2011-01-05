@@ -56,6 +56,7 @@ struct ckpt_hdr_header_arch {
 
 struct ckpt_hdr_thread {
 	struct ckpt_hdr h;
+	__u64 sysenter_return;
 	__u32 thread_info_flags;
 	__u16 gdt_entry_tls_entries;
 	__u16 sizeof_tls_array;

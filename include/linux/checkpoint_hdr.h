@@ -31,6 +31,21 @@
 #define CHECKPOINT_LSM_NAME_MAX 10
 
 /*
+ * Macros to help generate a build break if an ambiguous type changes
+ * in such a way that the size differs from the unambiguous type we
+ * actually write to the checkpoint stream.
+ *
+ * Examples:
+ *
+ * CKPT_BUILD_BUG_ON_MISMATCH(short, __u16);
+ * CKPT_BUILD_BUG_ON_MISMATCH(CKPT_STRUCT_MEMBER(mystruct, mymember),
+ *                            CKPT_STRUCT_MEMBER(ckpt_hdr_foo, bar));
+ *
+ */
+#define CKPT_STRUCT_MEMBER(type,member) (((struct type *)(NULL))->member)
+#define CKPT_BUILD_BUG_ON_MISMATCH(a,b) (BUILD_BUG_ON(sizeof(a) != sizeof(b)))
+
+/*
  * To maintain compatibility between 32-bit and 64-bit architecture flavors,
  * keep data 64-bit aligned: use padding for structure members, and use
  * __attribute__((aligned (8))) for the entire structure.
@@ -154,6 +169,10 @@ enum {
 #define CKPT_HDR_IPC_MSG_MSG CKPT_HDR_IPC_MSG_MSG
 	CKPT_HDR_IPC_SEM,
 #define CKPT_HDR_IPC_SEM CKPT_HDR_IPC_SEM
+	CKPT_HDR_TASK_SEM_UNDO_LIST,
+#define CKPT_HDR_TASK_SEM_UNDO_LIST CKPT_HDR_TASK_SEM_UNDO_LIST
+	CKPT_HDR_TASK_SEM_UNDO,
+#define CKPT_HDR_TASK_SEM_UNDO CKPT_HDR_TASK_SEM_UNDO
 
 	CKPT_HDR_SIGHAND = 601,
 #define CKPT_HDR_SIGHAND CKPT_HDR_SIGHAND
@@ -203,8 +222,6 @@ enum {
 #define CKPT_ARCH_PPC32 CKPT_ARCH_PPC32
 	CKPT_ARCH_PPC64,
 #define CKPT_ARCH_PPC64 CKPT_ARCH_PPC64
-	CKPT_ARCH_ARM,
-#define CKPT_ARCH_ARM CKPT_ARCH_ARM
 };
 
 /* shared objrects (objref) */
@@ -260,6 +277,8 @@ enum obj_type {
 #define CKPT_OBJ_NET_NS CKPT_OBJ_NET_NS
 	CKPT_OBJ_NETDEV,
 #define CKPT_OBJ_NETDEV CKPT_OBJ_NETDEV
+	CKPT_OBJ_SEM_UNDO,
+#define CKPT_OBJ_SEM_UNDO CKPT_OBJ_SEM_UNDO
 	CKPT_OBJ_MAX
 #define CKPT_OBJ_MAX CKPT_OBJ_MAX
 };
@@ -362,6 +381,8 @@ struct ckpt_hdr_task {
 
 	__u64 set_child_tid;
 	__u64 clear_child_tid;
+	__u64 sas_ss_sp;
+	__u32 sas_ss_size;
 } __attribute__((aligned(8)));
 
 /* Posix capabilities */
@@ -441,6 +462,17 @@ struct ckpt_hdr_ns {
 	__s32 net_objref;
 } __attribute__((aligned(8)));
 
+struct ckpt_hdr_task_sem_undo_list {
+	struct ckpt_hdr h;
+	__u32 count;
+};
+
+struct ckpt_hdr_task_sem_undo {
+	struct ckpt_hdr h;
+	__u32 semid;
+	__u32 semadj_count;
+};
+
 /* cannot include <linux/tty.h> from userspace, so define: */
 #define CKPT_NEW_UTS_LEN 64
 
@@ -461,6 +493,7 @@ struct ckpt_hdr_task_objs {
 	__s32 files_objref;
 	__s32 mm_objref;
 	__s32 fs_objref;
+	__s32 sem_undo_objref;
 	__s32 sighand_objref;
 	__s32 signal_objref;
 } __attribute__((aligned(8)));
@@ -500,6 +533,7 @@ enum restart_block_type {
 /* file system */
 struct ckpt_hdr_fs {
 	struct ckpt_hdr h;
+	__u32 umask;
 	/* char *fs_root */
 	/* char *fs_pwd */
 } __attribute__((aligned(8)));
@@ -568,6 +602,8 @@ struct ckpt_hdr_file_eventfd {
 /* socket */
 struct ckpt_hdr_socket {
 	struct ckpt_hdr h;
+
+	__u8 has_buffers;
 
 	struct { /* struct socket */
 		__u64 flags;
@@ -641,8 +677,7 @@ struct ckpt_hdr_socket_unix {
 	struct ckpt_hdr h;
 	__s32 this;
 	__s32 peer;
-	__u32 peercred_uid;
-	__u32 peercred_gid;
+	__s32 peercred;
 	__u32 flags;
 	__u32 laddr_len;
 	__u32 raddr_len;
@@ -896,16 +931,23 @@ struct ckpt_hdr_sighand {
 } __attribute__((aligned(8)));
 
 struct ckpt_siginfo {
-	__u32 signo;
-	__u32 _errno;
-	__u32 code;
-
-	__u32 pid;
-	__s32 uid;
-	__u32 sigval_int;
-	__u64 sigval_ptr;
-	__u64 utime;
-	__u64 stime;
+	__u32 csi_signo;
+	__s32 csi_errno;
+	__s32 csi_code;
+	__u32 csi_pid;
+	__u32 csi_uid;
+	__s32 csi_fd;
+	__u32 csi_tid;
+	__u32 csi_band;
+	__u32 csi_overrun;
+	__u32 csi_trapno;
+	__s32 csi_status;
+	__s32 csi_int;
+	__u64 csi_ptr;
+	__u64 csi_utime;
+	__u64 csi_stime;
+	__u64 csi_addr;
+	__s32 csi_sys_private; /* POSIX.1b timers */
 } __attribute__((aligned(8)));
 
 struct ckpt_hdr_sigpending {
@@ -1095,7 +1137,7 @@ struct ckpt_hdr_ldisc_n_tty {
 	/* if @datalen > 0, buffer contents follow (next object) */
 } __attribute__((aligned(8)));
 
-#define CKPT_TST_OVERFLOW_16(a,b) ((sizeof(a) > sizeof(b)) && ((a) > SHORT_MAX))
+#define CKPT_TST_OVERFLOW_16(a,b) ((sizeof(a) > sizeof(b)) && ((a) > SHRT_MAX))
 
 #define CKPT_TST_OVERFLOW_32(a,b) ((sizeof(a) > sizeof(b)) && ((a) > INT_MAX))
 

@@ -7,7 +7,7 @@
 /*
  *  Generic checkpoint-restart
  *
- *  Copyright (C) 2008-2009 Oren Laadan
+ *  Copyright (C) 2008-2010 Oren Laadan
  *
  *  This file is subject to the terms and conditions of the GNU General Public
  *  License.  See the file COPYING in the main directory of the Linux
@@ -31,52 +31,34 @@
 #define CHECKPOINT_FD_NONE -1
 
 
-#if __arm__
-
-#	define __NR_OABI_SYSCALL_BASE 0x900000
-#	if defined(__thumb__) || defined(__ARM_EABI__)
-#		define __NR_SYSCALL_BASE	0
-#	else
-#		define __NR_SYSCALL_BASE	__NR_OABI_SYSCALL_BASE
-#	endif
-
+#if __powerpc__
 
 #	ifndef __NR_checkpoint
-#		define __NR_checkpoint (__NR_SYSCALL_BASE+367)
+#		define __NR_checkpoint 346
 #	endif
 
 #	ifndef __NR_restart
-#		define __NR_restart (__NR_SYSCALL_BASE+368)
-#	endif
-
-#elif __powerpc__
-
-#	ifndef __NR_checkpoint
-#		define __NR_checkpoint 324
-#	endif
-
-#	ifndef __NR_restart
-#		define __NR_restart 325
+#		define __NR_restart 347
 #	endif
 
 #elif __s390x__
 
 #	ifndef __NR_checkpoint
-#		define __NR_checkpoint 333
+#		define __NR_checkpoint 336
 #	endif
 
 #	ifndef __NR_restart
-#		define __NR_restart 334
+#		define __NR_restart 337
 #	endif
 
 #elif __i386__
 
 #	ifndef __NR_checkpoint
-#		define __NR_checkpoint 339
+#		define __NR_checkpoint 342
 #	endif
 
 #	ifndef __NR_restart
-#		define __NR_restart 340
+#		define __NR_restart 343
 #	endif
 
 #elif __x86_64__
