@@ -18,10 +18,30 @@ static inline void ckpt_msg(int fd, char *format, ...)
 	write(fd, buf, strlen(buf));
 }
 
+static void inline _strerror(int errnum, char *buf, size_t buflen)
+{
+	/*
+	 * Because strerror_r() comes in two flavors, each with
+	 * different behavior (see man-page), we must select one
+	 */
+#if  (_POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600) && !defined(_GNU_SOURCE)
+	/* the XSI-compliant flavor */
+	strerror_r(errnum, buf, buflen);
+#else
+	/* the GNU-specific version */
+	char *err = strerror_r(errnum, buf, buflen);
+	if (err != buf) {
+		while (*err && --buflen)
+			*buf++ = *err++;
+		*buf = '\0';
+	}
+#endif
+}
+
 #define ckpt_perror(s)						\
 	do {							\
 		char __buf[256];				\
-		strerror_r(errno, __buf, 256);			\
+		_strerror(errno, __buf, 256);			\
 		ckpt_msg(global_uerrfd, "%s: %s\n", s, __buf);	\
 	} while (0)
 
