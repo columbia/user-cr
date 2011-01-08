@@ -151,6 +151,7 @@ struct ckpt_ctx {
 	char tree[BUFSIZE];
 	char vpids[BUFSIZE];
 	char buf[BUFSIZE];
+
 	struct cr_restart_args *args;
 
 	char *freezer;
@@ -359,13 +360,14 @@ static int freezer_prepare(struct ckpt_ctx *ctx)
 	if (fd < 0) {
 		ckpt_perror("freezer path");
 		free(freezer);
-		exit(1);
+		return -1;
 	}
 	ret = write(fd, FREEZER_THAWED, sizeof(FREEZER_THAWED)); 
 	if (ret != sizeof(FREEZER_THAWED)) {
 		ckpt_perror("thawing freezer");
 		free(freezer);
-		exit(1);
+		close(fd);
+		return -1;
 	}
 
 	sprintf(freezer, "%s/tasks", ctx->args->freezer);
@@ -379,7 +381,6 @@ static int freezer_register(struct ckpt_ctx *ctx, pid_t pid)
 	char pidstr[16];
 	int fd, n, ret;
 
-
 	fd = open(ctx->freezer, O_WRONLY, 0);
 	if (fd < 0) {
 		ckpt_perror("freezer path");
@@ -390,13 +391,12 @@ static int freezer_register(struct ckpt_ctx *ctx, pid_t pid)
 	ret = write(fd, pidstr, n);
 	if (ret != n) {
 		ckpt_perror("adding pid %d to freezer");
-		ret = -1;
-	} else {
-		ret = 0;
+		close(fd);
+		return -1;
 	}
 
 	close(fd);
-	return ret;
+	return 0;
 }
 
 /*
@@ -426,7 +426,7 @@ int process_args(struct cr_restart_args *args)
 	if (args->pidns) {
 		ckpt_err("This version of restart was compiled without "
 		       "support for --pidns.\n");
-		exit(1);
+		return -1;
 	}
 #endif
 
@@ -434,7 +434,7 @@ int process_args(struct cr_restart_args *args)
 	if (global_debug) {
 		ckpt_err("This version of restart was compiled without "
 		       "support for --debug.\n");
-		exit(1);
+		return -1;
 	}
 #endif
 
@@ -446,7 +446,7 @@ int process_args(struct cr_restart_args *args)
 	if (args->pids) {
 		ckpt_err("This version of restart was compiled without "
 		       "support for --pids.\n");
-		exit(1);
+		return -1;
 	}
 #endif
 #endif
@@ -455,7 +455,7 @@ int process_args(struct cr_restart_args *args)
 	    (args->pids || args->pidns || args->show_status ||
 	     args->copy_status || args->freezer)) {
 		ckpt_err("Invalid mix of --self with multiprocess options\n");
-		exit(1);
+		return -1;
 	}
 
 	return 0;
@@ -478,6 +478,17 @@ static void init_ctx(struct ckpt_ctx *ctx)
 
 static void exit_ctx(struct ckpt_ctx *ctx)
 {
+	if (ctx->freezer)
+		free(ctx->freezer);
+	if (ctx->tasks_arr)
+		free(ctx->tasks_arr);
+	if (ctx->pids_arr)
+		free(ctx->pids_arr);
+	if (ctx->copy_arr)
+		free(ctx->copy_arr);
+	if (ctx->vpids_arr)
+		free(ctx->vpids_arr);
+
 	/* unused fd will be silently ignored */
 	close(ctx->pipe_in);
 	close(ctx->pipe_out);
@@ -502,34 +513,40 @@ int cr_restart(struct cr_restart_args *args)
 
 	ret = process_args(args);
 	if (ret < 0)
-		return ret;
+		return -1;
 
 	/* freezer preparation */
 	if (args->freezer && freezer_prepare(&ctx) < 0)
-		exit(1);
+		goto cleanup;
 
 	/* self-restart ends here: */
 	if (args->self) {
+		/*
+		 * NOTE: while we do attempt to cleanup if an error
+		 * occurs, some the following is irreversible - because
+		 * of the nature of self-restart...
+		 */
+
 		/* private mounts namespace ? */
 		if (args->mntns && unshare(CLONE_NEWNS | CLONE_FS) < 0) {
 			ckpt_perror("unshare");
-			exit(1);
+			goto cleanup;
 		}
 		/* chroot ? */
 		if (args->root && chroot(args->root) < 0) {
 			ckpt_perror("chroot");
-			exit(1);
+			goto cleanup;
 		}
 		/* remount /dev/pts ? */
 		if (args->mnt_pty && ckpt_remount_devpts(&ctx) < 0)
-			exit(1);
+			goto cleanup;
 
 		restart(getpid(), ctx.args->infd,
 			RESTART_TASKSELF, args->klogfd);
 
 		/* reach here if restart(2) failed ! */
 		ckpt_perror("restart");
-		exit(1);
+		goto cleanup;
 	}
 
 	setpgrp();
@@ -537,48 +554,48 @@ int cr_restart(struct cr_restart_args *args)
 	ret = ckpt_read_header(&ctx);
 	if (ret < 0) {
 		ckpt_perror("read c/r header");
-		exit(1);
+		goto cleanup;
 	}
 		
 	ret = ckpt_read_header_arch(&ctx);
 	if (ret < 0) {
 		ckpt_perror("read c/r header arch");
-		exit(1);
+		goto cleanup;
 	}
 
 	ret = ckpt_read_container(&ctx);
 	if (ret < 0) {
 		ckpt_perror("read c/r container section");
-		exit(1);
+		goto cleanup;
 	}
 
 	ret = ckpt_read_tree(&ctx);
 	if (ret < 0) {
 		ckpt_perror("read c/r tree");
-		exit(1);
+		goto cleanup;
 	}
 
 	ret = ckpt_read_vpids(&ctx);
 	if (ret < 0) {
 		ckpt_perror("read c/r tree");
-		exit(1);
+		goto cleanup;
 	}
 
 	/* build creator-child-relationship tree */
 	if (hash_init(&ctx) < 0)
-		exit(1);
+		goto cleanup;
 	ret = ckpt_build_tree(&ctx);
 	hash_exit(&ctx);
 	if (ret < 0)
-		exit(1);
+		goto cleanup;
 
 	ret = assign_vpids(&ctx);
 	if (ret < 0)
-		exit(1);
+		goto cleanup;
 
 	ret = ckpt_fork_feeder(&ctx);
 	if (ret < 0)
-		exit(1);
+		goto cleanup;
 
 	/*
 	 * Have the first child in the restarted process tree
@@ -619,9 +636,13 @@ int cr_restart(struct cr_restart_args *args)
 	/*
 	 * On success, return pid of root of the restart process tree.
 	 */
-	if (ret >= 0)
-		ret = global_child_pid;
 
+	if (ret < 0)
+		goto cleanup;
+
+	ret = global_child_pid;
+
+ cleanup:
 	exit_ctx(&ctx);
 	return ret;
 }
@@ -684,7 +705,7 @@ static int ckpt_collect_child(struct ckpt_ctx *ctx)
 		status = global_child_status;
 	} else if (pid < 0) {
 		ckpt_perror("WEIRD: collect child task");
-		exit(1);
+		return -1;
 	}
 
 	return ckpt_parse_status(status, mimic, verbose);
@@ -783,14 +804,14 @@ static int ckpt_probe_child(pid_t pid, char *str)
 	ret = waitpid(pid, &status, WNOHANG);
 	if (ret == pid) {
 		report_exit_status(status, str, 0);
-		exit(1);
+		return -1;
 	} else if (ret < 0 && errno == ECHILD) {
 		ckpt_err("WEIRD: %s exited without trace (%s)\n",
 			 str, strerror(errno));
-		exit(1);
+		return -1;
 	} else if (ret != 0) {
 		ckpt_err("waitpid for %s (%s)", str, strerror(errno));
-		exit(1);
+		return -1;
 	}
 	return 0;
 }
@@ -826,14 +847,14 @@ static int __ckpt_coordinator(void *arg)
 	/* chroot ? */
 	if (ctx->args->root && chroot(ctx->args->root) < 0) {
 		ckpt_perror("chroot");
-		_exit(1);
+		exit(1);
 	}
 	/* tasks with new pid-ns need new /proc mount */
 	if (ckpt_remount_proc(ctx) < 0)
-		_exit(1);
+		exit(1);
 	/* remount /dev/pts ? */
 	if (ctx->args->mnt_pty && ckpt_remount_devpts(ctx) < 0)
-		_exit(1);
+		exit(1);
 
 	if (!ctx->args->wait)
 		close(ctx->pipe_coord[0]);
@@ -943,7 +964,7 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 
 	root_pid = ckpt_fork_child(ctx, &ctx->tasks_arr[0]);
 	if (root_pid < 0)
-		exit(1);
+		return -1;
 	global_child_pid = root_pid;
 
 	/* catch SIGCHLD to detect errors during hierarchy creation */
@@ -956,7 +977,7 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 	 * signal handler was plugged; verify that it's still there.
 	 */
 	if (ckpt_probe_child(root_pid, "root task") < 0)
-		exit(1);
+		return -1;
 
 	if (ctx->args->keep_frozen)
 		flags |= RESTART_FROZEN;
@@ -970,7 +991,7 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 		ckpt_perror("restart failed");
 		ckpt_verbose("Failed\n");
 		ckpt_dbg("restart failed ?\n");
-		exit(1);
+		return -1;
 	}
 
 	ckpt_verbose("Success\n");
@@ -982,7 +1003,7 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 		/* Report success/failure to the parent */
 		if (write(ctx->pipe_coord[1], &ret, sizeof(ret)) < 0) {
 			ckpt_perror("failed to report status");
-			exit(1);
+			return -1;
 		}
 
 		/*
@@ -1042,22 +1063,16 @@ static int ckpt_build_tree(struct ckpt_ctx *ctx)
 	}
 
 	/* initialize tree */
-	if (ckpt_init_tree(ctx) < 0) {
-		free(ctx->tasks_arr);
-		ctx->tasks_arr = NULL;
+	if (ckpt_init_tree(ctx) < 0)
 		return -1;
-	}
 
 	/* assign a creator to each task */
 	for (i = 0; i < ctx->tasks_nr; i++) {
 		task = &ctx->tasks_arr[i];
 		if (task->creator)
 			continue;
-		if (ckpt_set_creator(ctx, task) < 0) {
-			free(ctx->tasks_arr);
-			ctx->tasks_arr = NULL;
+		if (ckpt_set_creator(ctx, task) < 0)
 			return -1;
-		}
 	}
 
 #ifdef CHECKPOINT_DEBUG
@@ -1871,12 +1886,12 @@ static int ckpt_fork_feeder(struct ckpt_ctx *ctx)
 
 	if (pipe(ctx->pipe_feed)) {
 		ckpt_perror("pipe");
-		exit(1);
+		return -1;
 	}
 
 	if (pipe(ctx->pipe_child) < 0) {
 		ckpt_perror("pipe");
-		exit(1);
+		return -1;
 	}
 
 	/*
@@ -1917,6 +1932,9 @@ static int ckpt_fork_feeder(struct ckpt_ctx *ctx)
 
 static void ckpt_abort(struct ckpt_ctx *ctx, char *str)
 {
+	/* should only be called by the feeder */
+	assert(ctx->whoami == CTX_FEEDER);
+
 	ckpt_perror(str);
 	kill(-(ctx->root_pid), SIGKILL);
 	exit(1);
@@ -2389,17 +2407,12 @@ static int ckpt_read_tree(struct ckpt_ctx *ctx)
 
 	ctx->pids_arr = malloc(len);
 	ctx->copy_arr = malloc(len);
-	if (!ctx->pids_arr || !ctx->copy_arr) {
-		if (ctx->pids_arr)
-			free(ctx->pids_arr);
+	if (!ctx->pids_arr || !ctx->copy_arr)
 		return -1;
-	}
 
 	ret = ckpt_read_obj_ptr(ctx, ctx->pids_arr, len, CKPT_HDR_BUFFER);
-	if (ret < 0) {
-		free(ctx->pids_arr);
+	if (ret < 0)
 		return ret;
-	}
 
 	return ret;
 }
@@ -2493,9 +2506,6 @@ static int ckpt_read_vpids(struct ckpt_ctx *ctx)
 		return -1;
 
 	ret = ckpt_read_obj_ptr(ctx, ctx->vpids_arr, len, CKPT_HDR_BUFFER);
-	if (ret < 0)
-		free(ctx->vpids_arr);
-
 	return ret;
 }
 
