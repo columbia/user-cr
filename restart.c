@@ -549,8 +549,6 @@ int cr_restart(struct cr_restart_args *args)
 		goto cleanup;
 	}
 
-	setpgrp();
-
 	ret = ckpt_read_header(&ctx);
 	if (ret < 0) {
 		ckpt_perror("read c/r header");
@@ -843,6 +841,8 @@ static int ckpt_remount_proc(struct ckpt_ctx *ctx)
 static int __ckpt_coordinator(void *arg)
 {
 	struct ckpt_ctx *ctx = (struct ckpt_ctx *) arg;
+
+	/* none of this requires cleanup: we're forked ... */
 
 	/* chroot ? */
 	if (ctx->args->root && chroot(ctx->args->root) < 0) {
@@ -1723,6 +1723,8 @@ int ckpt_fork_stub(void *data)
 	struct task *task = (struct task *) data;
 	struct ckpt_ctx *ctx = task->ctx;
 
+	/* none of this requires cleanup: we're forked ... */
+
 	/* chroot ? */
 	if ((task->flags & TASK_NEWROOT) && chroot(ctx->args->root) < 0)
 		return -1;
@@ -1936,7 +1938,7 @@ static void ckpt_abort(struct ckpt_ctx *ctx, char *str)
 	assert(ctx->whoami == CTX_FEEDER);
 
 	ckpt_perror(str);
-	kill(-(ctx->root_pid), SIGKILL);
+	kill(ctx->root_pid, SIGKILL);
 	exit(1);
 }
 
