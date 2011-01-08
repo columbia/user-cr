@@ -32,6 +32,7 @@
 #include <sys/prctl.h>
 #include <sys/mount.h>
 #include <stdarg.h>
+#include <assert.h>
 
 #include <linux/sched.h>
 #include <linux/checkpoint.h>
@@ -117,6 +118,12 @@ struct task zero_task;
 #define TASK_NEWNS	0x200	/* unshare namespace/file-system */
 
 struct ckpt_ctx {
+
+	enum {
+		CTX_FEEDER,
+		CTX_RESTART,
+	} whoami;
+
 	pid_t root_pid;
 	int pipe_in;
 	int pipe_out;
@@ -403,14 +410,9 @@ int process_args(struct cr_restart_args *args)
 	global_ulogfd = args->ulogfd;
 	global_uerrfd = args->uerrfd;
 
-	/* input file descriptor (default: stdin) */
-	if (args->infd >= 0) {
-		if (dup2(args->infd, STDIN_FILENO) < 0) {
-			ckpt_perror("dup2 input file");
-			exit(1);
-		}
-		if (args->infd != STDIN_FILENO)
-			close(args->infd);
+	if (args->infd < 0) {
+		ckpt_err("Invalid input fd %d\n", args->infd);
+		return -1;
 	}
 
 	/* output file descriptor (default: none) */
@@ -466,6 +468,7 @@ int cr_restart(struct cr_restart_args *args)
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.args = args;
+	ctx.whoami = CTX_RESTART;  /* for sanity checked */
 	ctx.tasks_pid = CKPT_RESERVED_PIDS;
 
 	ret = process_args(args);
@@ -492,7 +495,8 @@ int cr_restart(struct cr_restart_args *args)
 		if (args->mnt_pty && ckpt_remount_devpts(&ctx) < 0)
 			exit(1);
 
-		restart(getpid(), STDIN_FILENO, RESTART_TASKSELF, args->klogfd);
+		restart(getpid(), ctx.args->infd,
+			RESTART_TASKSELF, args->klogfd);
 
 		/* reach here if restart(2) failed ! */
 		ckpt_perror("restart");
@@ -926,7 +930,8 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 	if (ctx->args->keep_lsm)
 		flags |= RESTART_KEEP_LSM;
 
-	ret = restart(root_pid, STDIN_FILENO, flags, ctx->args->klogfd);
+	ret = restart(root_pid, ctx->args->infd,
+		      flags, ctx->args->klogfd);
 
 	if (ret < 0) {
 		ckpt_perror("restart failed");
@@ -1658,7 +1663,7 @@ static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 
 	/* on success this doesn't return */
 	ckpt_dbg("about to call sys_restart(), flags %#lx\n", flags);
-	ret = restart(0, STDIN_FILENO, flags, CHECKPOINT_FD_NONE);
+	ret = restart(0, 0, flags, CHECKPOINT_FD_NONE);
 	if (ret < 0)
 		ckpt_perror("task restore failed");
 	return ret;
@@ -1859,15 +1864,13 @@ static int ckpt_fork_feeder(struct ckpt_ctx *ctx)
 		return -1;
 	}
 
-	/* children pipe */
+	/* children pipe: used for status reports from children */
 	close(ctx->pipe_child[0]);
 	ctx->pipe_out = ctx->pipe_child[1];
-	/* feeder pipe */
+
+	/* feeder pipe: feeder writes, kernel's sys_restart reads */
 	close(ctx->pipe_feed[1]);
-	if (ctx->pipe_feed[0] != STDIN_FILENO) {
-		dup2(ctx->pipe_feed[0], STDIN_FILENO);
-		close(ctx->pipe_feed[0]);
-	}
+	ctx->args->infd = ctx->pipe_feed[0];
 
 	return 0;
 }
@@ -1883,6 +1886,9 @@ static void ckpt_abort(struct ckpt_ctx *ctx, char *str)
 static void ckpt_read_write_blind(struct ckpt_ctx *ctx)
 {
 	int ret;
+
+	/* called by the feeder, so use stdin/stdout */
+	assert(ctx->whoami == CTX_FEEDER);
 
 	while (1) {
 		ret = read(STDIN_FILENO, ctx->buf, BUFSIZE);
@@ -1902,6 +1908,9 @@ static void ckpt_read_write_inspect(struct ckpt_ctx *ctx)
 {
 	struct ckpt_hdr h;
 	int len, ret;
+
+	/* called by the feeder, so use stdin/stdout */
+	assert(ctx->whoami == CTX_FEEDER);
 
 	while (1) {
 		ret = _ckpt_read(STDIN_FILENO, &h, sizeof(h));
@@ -1957,9 +1966,17 @@ static int ckpt_do_feeder(void *data)
 {
 	struct ckpt_ctx *ctx = (struct ckpt_ctx *) data;
 
+	ctx->whoami = CTX_FEEDER;  /* for sanity checks */
+
+	/*
+	 * feeder has a separate file descriptor table, so
+	 * close/dup/open etc do not affect original caller
+	 */
+
 	/* children pipe */
 	close(ctx->pipe_child[1]);
 	ctx->pipe_in = ctx->pipe_child[0];
+
 	/* feeder pipe */
 	close(ctx->pipe_feed[0]);
 	if (ctx->pipe_feed[1] != STDOUT_FILENO) {
@@ -2111,6 +2128,9 @@ static int ckpt_write(int fd, void *buf, int count)
 
 int ckpt_write_obj(struct ckpt_ctx *ctx, struct ckpt_hdr *h)
 {
+	/* called by the feeder, so use stdout */
+	assert(ctx->whoami == CTX_FEEDER);
+
 	return ckpt_write(STDOUT_FILENO, h, h->len);
 }
 
@@ -2118,6 +2138,9 @@ int ckpt_write_obj_ptr(struct ckpt_ctx *ctx, void *buf, int n, int type)
 {
 	struct ckpt_hdr h;
 	int ret;
+
+	/* called by the feeder, so use stdout */
+	assert(ctx->whoami == CTX_FEEDER);
 
 	h.type = type;
 	h.len = n + sizeof(h);
@@ -2168,9 +2191,10 @@ static int ckpt_read(int fd, void *buf, int count)
 static int ckpt_read_obj(struct ckpt_ctx *ctx,
 			 struct ckpt_hdr *h, void *buf, int n)
 {
+	int fd = ctx->args->infd;
 	int ret;
 
-	ret = ckpt_read(STDIN_FILENO, h, sizeof(*h));
+	ret = ckpt_read(fd, h, sizeof(*h));
 	if (ret < 0)
 		return ret;
 	if (h->len < sizeof(*h) || h->len > n) {
@@ -2179,7 +2203,7 @@ static int ckpt_read_obj(struct ckpt_ctx *ctx,
 	}
 	if (h->len == sizeof(*h))
 		return 0;
-	return ckpt_read(STDIN_FILENO, buf, h->len - sizeof(*h));
+	return ckpt_read(fd, buf, h->len - sizeof(*h));
 }
 
 static int ckpt_read_obj_type(struct ckpt_ctx *ctx, void *buf, int n, int type)
