@@ -461,12 +461,41 @@ int process_args(struct cr_restart_args *args)
 	return 0;
 }
 
+static void init_ctx(struct ckpt_ctx *ctx)
+{
+	memset(ctx, 0, sizeof(*ctx));
+
+	/* mark all fds as unused */
+	ctx->pipe_in = -1;
+	ctx->pipe_out = -1;
+	ctx->pipe_child[0] = -1;
+	ctx->pipe_child[1] = -1;
+	ctx->pipe_feed[0] = -1;
+	ctx->pipe_feed[1] = -1;
+	ctx->pipe_coord[0] = -1;
+	ctx->pipe_coord[1] = -1;
+}
+
+static void exit_ctx(struct ckpt_ctx *ctx)
+{
+	/* unused fd will be silently ignored */
+	close(ctx->pipe_in);
+	close(ctx->pipe_out);
+	close(ctx->pipe_child[0]);
+	close(ctx->pipe_child[1]);
+	close(ctx->pipe_feed[0]);
+	close(ctx->pipe_feed[1]);
+	close(ctx->pipe_coord[0]);
+	close(ctx->pipe_coord[1]);
+}
+
 int cr_restart(struct cr_restart_args *args)
 {
 	struct ckpt_ctx ctx;
 	int ret;
 
-	memset(&ctx, 0, sizeof(ctx));
+	init_ctx(&ctx);
+
 	ctx.args = args;
 	ctx.whoami = CTX_RESTART;  /* for sanity checked */
 	ctx.tasks_pid = CKPT_RESERVED_PIDS;
@@ -593,6 +622,7 @@ int cr_restart(struct cr_restart_args *args)
 	if (ret >= 0)
 		ret = global_child_pid;
 
+	exit_ctx(&ctx);
 	return ret;
 }
 
@@ -817,6 +847,7 @@ static int ckpt_coordinator_status(struct ckpt_ctx *ctx)
 	int ret;
 
 	close(ctx->pipe_coord[1]);
+	ctx->pipe_coord[1] = -1;  /* mark unused */
 
 	ret = read(ctx->pipe_coord[0], &status, sizeof(status));
 	if (ret < 0)
@@ -828,6 +859,8 @@ static int ckpt_coordinator_status(struct ckpt_ctx *ctx)
 		status = 0;
 
 	close(ctx->pipe_coord[0]);
+	ctx->pipe_coord[0] = -1;  /* mark unused */
+
 	return status;
 }
 
@@ -1642,6 +1675,7 @@ static int ckpt_make_tree(struct ckpt_ctx *ctx, struct task *task)
 		return -1;
 	}
 	close(ctx->pipe_out);
+	ctx->pipe_out = -1;  /* mark unused */
 
 	/*
 	 * At this point restart may have already begun in the kernel.
@@ -1868,9 +1902,15 @@ static int ckpt_fork_feeder(struct ckpt_ctx *ctx)
 	close(ctx->pipe_child[0]);
 	ctx->pipe_out = ctx->pipe_child[1];
 
+	ctx->pipe_child[0] = -1;  /* mark unused */
+	ctx->pipe_child[1] = -1;  /* mark unused */
+
 	/* feeder pipe: feeder writes, kernel's sys_restart reads */
 	close(ctx->pipe_feed[1]);
 	ctx->args->infd = ctx->pipe_feed[0];
+
+	ctx->pipe_feed[0] = -1;  /* mark unused */
+	ctx->pipe_feed[1] = -1;  /* mark unused */
 
 	return 0;
 }
@@ -1983,6 +2023,11 @@ static int ckpt_do_feeder(void *data)
 		dup2(ctx->pipe_feed[1], STDOUT_FILENO);
 		close(ctx->pipe_feed[1]);
 	}
+
+	/*
+	 * we don't need to mark pipe_child[0,1] and pipe_feed[0,1]
+	 * because the feeder doesn't affect the original caller
+	 */
 
 	if (ckpt_adjust_pids(ctx) < 0)
 		ckpt_abort(ctx, "collect pids");
@@ -2100,7 +2145,7 @@ static int ckpt_adjust_pids(struct ckpt_ctx *ctx)
 	}
 #endif
 
-	close(ctx->pipe_in);
+	close(ctx->pipe_in);  /* called by feeder, no need to mark */
 	return 0;
 }
 
