@@ -43,7 +43,6 @@ enum {
 
 /* arch dependent constants */
 #define CKPT_ARCH_NSIG 64
-#define CKPT_TTY_NCC 8
 
 struct ckpt_hdr_header_arch {
 	struct ckpt_hdr h;

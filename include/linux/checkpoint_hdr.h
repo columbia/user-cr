@@ -72,6 +72,7 @@ struct ckpt_hdr {
 	__u32 len;
 } __attribute__((aligned(8)));
 
+#include <asm/termbits.h>
 #include <asm/checkpoint_hdr.h>
 
 /* header types */
@@ -218,10 +219,6 @@ enum {
 #define CKPT_ARCH_X86_64 CKPT_ARCH_X86_64
 	CKPT_ARCH_S390X,
 #define CKPT_ARCH_S390X CKPT_ARCH_S390X
-	CKPT_ARCH_PPC32,
-#define CKPT_ARCH_PPC32 CKPT_ARCH_PPC32
-	CKPT_ARCH_PPC64,
-#define CKPT_ARCH_PPC64 CKPT_ARCH_PPC64
 };
 
 /* shared objrects (objref) */
@@ -302,7 +299,7 @@ struct ckpt_const {
 	__u16 rlimit_nlimits;
 	/* tty */
 	__u16 n_tty_buf_size;
-	__u16 tty_termios_ncc;
+	__u16 tty_termios_nccs;
 } __attribute__((aligned(8)));
 
 /* checkpoint image header */
@@ -887,8 +884,6 @@ enum vma_type {
 #define CKPT_VMA_SHM_IPC CKPT_VMA_SHM_IPC
 	CKPT_VMA_SHM_IPC_SKIP,	/* shared sysvipc (skip contents) */
 #define CKPT_VMA_SHM_IPC_SKIP CKPT_VMA_SHM_IPC_SKIP
-	CKPT_VMA_MAX,
-#define CKPT_VMA_MAX CKPT_VMA_MAX
 };
 
 /* vma descriptor */
@@ -1088,12 +1083,14 @@ struct ckpt_hdr_tty {
 
 	/* termios */
 	struct {
-		__u16 c_iflag;
-		__u16 c_oflag;
-		__u16 c_cflag;
-		__u16 c_lflag;
+		__u32 c_iflag;
+		__u32 c_oflag;
+		__u32 c_cflag;
+		__u32 c_lflag;
+		__u32 c_ispeed;
+		__u32 c_ospeed;
 		__u8 c_line;
-		__u8 c_cc[CKPT_TTY_NCC];
+		__u8 c_cc[NCCS];
 	} __attribute__((aligned(8))) termios;
 
 	/* winsize */

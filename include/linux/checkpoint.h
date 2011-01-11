@@ -31,17 +31,7 @@
 #define CHECKPOINT_FD_NONE -1
 
 
-#if __powerpc__
-
-#	ifndef __NR_checkpoint
-#		define __NR_checkpoint 346
-#	endif
-
-#	ifndef __NR_restart
-#		define __NR_restart 347
-#	endif
-
-#elif __s390x__
+#if __s390x__
 
 #	ifndef __NR_checkpoint
 #		define __NR_checkpoint 336

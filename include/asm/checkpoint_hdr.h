@@ -3,9 +3,7 @@
  */
 #ifndef __ASM_CHECKPOINT_HDR_H_
 #define __ASM_CHECKPOINT_HDR_H_
-#if __powerpc__
-#include <asm-powerpc/checkpoint_hdr.h>
-#elif __s390x__
+#if __s390x__
 #include <asm-s390/checkpoint_hdr.h>
 #elif __i386__ || __x86_64__
 #include <asm-x86/checkpoint_hdr.h>
