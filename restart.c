@@ -158,6 +158,9 @@ struct ckpt_ctx {
 	struct cr_restart_args *args;
 
 	char *freezer;
+
+	/* system limits */
+	pid_t pid_max;
 };
 
 struct pid_swap {
@@ -489,6 +492,9 @@ int process_args(struct cr_restart_args *args)
 
 static void init_ctx(struct ckpt_ctx *ctx)
 {
+	FILE *file;
+	char buf[1024];
+
 	memset(ctx, 0, sizeof(*ctx));
 
 	/* mark all fds as unused */
@@ -500,6 +506,15 @@ static void init_ctx(struct ckpt_ctx *ctx)
 	ctx->pipe_feed[1] = -1;
 	ctx->pipe_coord[0] = -1;
 	ctx->pipe_coord[1] = -1;
+
+	/* system limits */
+	ctx->pid_max = SHRT_MAX;  /* default */
+	file = fopen("/proc/sys/kernel/pid_max", "r");
+	if (file) {
+		if (fgets(buf, 1024, file))
+			ctx->pid_max = atoi(buf);
+		fclose(file);
+	}
 }
 
 static void exit_ctx(struct ckpt_ctx *ctx)
@@ -1223,12 +1238,12 @@ static int ckpt_alloc_pid(struct ckpt_ctx *ctx)
 	 * (this will become inefficient if pid-space is exhausted)
 	 */
 	do {
-		if (ctx->tasks_pid == INT_MAX)
+		if (ctx->tasks_pid == ctx->pid_max)
 			ctx->tasks_pid = CKPT_RESERVED_PIDS;
 		else
 			ctx->tasks_pid++;
 
-		if (n++ == INT_MAX) {	/* ohhh... */
+		if (n++ == ctx->pid_max) {	/* ohhh... */
 			ckpt_err("pid namsepace exhausted");
 			return -1;
 		}
