@@ -254,7 +254,7 @@ static int image_parse(int fd, struct args *args)
 static int image_parse_tree(struct ckpt_hdr *h, int fd, struct args *args)
 {
 	struct ckpt_hdr_tree *hh;
-	struct ckpt_pids *pp;
+	struct ckpt_task_pids *pp;
 	int nr_tasks;
 	int i, ret;
 
@@ -268,7 +268,7 @@ static int image_parse_tree(struct ckpt_hdr *h, int fd, struct args *args)
 	if (ret <= 0)
 		return -1;
 
-	pp =  (struct ckpt_pids *) h;
+	pp =  (struct ckpt_task_pids *) h;
 
 	if (args->show_task_tree) {
 		for (i = 0; i < nr_tasks; i++) {
