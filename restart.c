@@ -359,35 +359,32 @@ static void sigint_handler(int sig)
 
 static int freezer_prepare(struct ckpt_ctx *ctx)
 {
-	char *freezer;
 	int fd, ret;
 
 #define FREEZER_THAWED  "THAWED"
 
-	freezer = malloc(strlen(ctx->args->freezer) + 32);
-	if (!freezer) {
+	ctx->freezer = malloc(strlen(ctx->args->freezer) + 32);
+	if (!ctx->freezer) {
 		ckpt_perror("malloc freezer buf");
-		return -1;
+		return ctx_set_errno(ctx);
 	}
 
-	sprintf(freezer, "%s/freezer.state", ctx->args->freezer);
+	sprintf(ctx->freezer, "%s/freezer.state", ctx->args->freezer);
 
-	fd = open(freezer, O_WRONLY, 0);
+	fd = open(ctx->freezer, O_WRONLY, 0);
 	if (fd < 0) {
 		ckpt_perror("freezer path");
-		free(freezer);
-		return -1;
+		return ctx_set_errno(ctx);
 	}
 	ret = write(fd, FREEZER_THAWED, sizeof(FREEZER_THAWED)); 
 	if (ret != sizeof(FREEZER_THAWED)) {
 		ckpt_perror("thawing freezer");
-		free(freezer);
+		ctx_set_errno(ctx);
 		close(fd);
 		return -1;
 	}
 
-	sprintf(freezer, "%s/tasks", ctx->args->freezer);
-	ctx->freezer = freezer;
+	sprintf(ctx->freezer, "%s/tasks", ctx->args->freezer);
 	close(fd);
 	return 0;
 }
@@ -400,13 +397,14 @@ static int freezer_register(struct ckpt_ctx *ctx, pid_t pid)
 	fd = open(ctx->freezer, O_WRONLY, 0);
 	if (fd < 0) {
 		ckpt_perror("freezer path");
-		return -1;
+		return ctx_set_errno(ctx);
 	}
 
 	n = sprintf(pidstr, "%d", pid);
 	ret = write(fd, pidstr, n);
 	if (ret != n) {
 		ckpt_perror("adding pid %d to freezer");
+		ctx_set_errno(ctx);
 		close(fd);
 		return -1;
 	}
