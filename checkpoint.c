@@ -37,14 +37,6 @@ int cr_checkpoint(int pid, struct cr_checkpoint_args *args)
 
 	global_uerrfd = args->uerrfd;
 
-	/* output file descriptor (default: stdout) */
-	if (args->outfd < 0)
-		args->outfd = STDOUT_FILENO;
-
-	/* output file descriptor (default: none) */
-	if (args->logfd < 0)
-		args->logfd = CHECKPOINT_FD_NONE;
-
 	if (!args->container)
 		args->flags |= CHECKPOINT_SUBTREE;
 

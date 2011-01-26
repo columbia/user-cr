@@ -1,3 +1,13 @@
+/*
+ *  checkpoint-main.c: checkpoint one or multiple processes
+ *
+ *  Copyright (C) 2008-2011 Oren Laadan
+ *
+ *  This file is subject to the terms and conditions of the GNU General Public
+ *  License.  See the file COPYING in the main directory of the Linux
+ *  distribution for more details.
+ */
+
 #include <stdio.h>
 #include <unistd.h>
 #include <stdarg.h>
@@ -29,6 +39,7 @@ static char usage_str[] =
 "     --output-fd=FD     write data to file descriptor FD instead of stdout\n"
 "  -l,--logfile=FILE     write error and debug data to FILE (default=none)\n"
 "     --logile-fd=FD     write error and debug data to file descriptor FD\n"
+"  -f,--force            if an output file already exists, overwrite it\n"
 "  -c,--container        require the PID is a container-init\n"
 "  -N,--netns            checkpoint network namespace(s)\n"
 "  -v,--verbose          verbose output\n"
@@ -60,21 +71,30 @@ static void parse_args(struct cr_checkpoint_args *args, int argc, char *argv[])
 		{ "output-fd",	required_argument,	NULL, 1 },
 		{ "logfile",	required_argument,	NULL, 'l' },
 		{ "logfile-fd",	required_argument,	NULL, 2 },
+		{ "force",	no_argument,		NULL, 'f' },
 		{ "container",	no_argument,		NULL, 'c' },
 		{ "verbose",	no_argument,		NULL, 'v' },
 		{ "netns",	no_argument,		NULL, 'N' },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hvco:l:N";
+	static char optc[] = "hvcfo:l:N";
 	char *output;
 	char *logfile;
+	int outfd;
+	int logfd;
+	int force;
+	int excl;
 
 	/* defaults */
-	args->outfd = -1;
-	args->logfd = -1;
+	args->outfd = fileno(stdout);
+	args->logfd = CHECKPOINT_FD_NONE;
 	args->uerrfd = fileno(stderr);
+
 	output = NULL;
 	logfile = NULL;
+	outfd = -1;
+	logfd = -1;
+	force = 0;
 
 	while (1) {
 		int c = getopt_long(argc, argv, optc, opts, NULL);
@@ -89,8 +109,8 @@ static void parse_args(struct cr_checkpoint_args *args, int argc, char *argv[])
 			output = optarg;
 			break;
 		case 1:
-			args->outfd = str2num(optarg);
-			if (args->outfd < 0) {
+			outfd = str2num(optarg);
+			if (outfd < 0) {
 				ckpt_err("checkpoint: invalid file descriptor\n");
 				exit(1);
 			}
@@ -99,8 +119,8 @@ static void parse_args(struct cr_checkpoint_args *args, int argc, char *argv[])
 			logfile = optarg;
 			break;
 		case 2:
-			args->logfd = str2num(optarg);
-			if (args->logfd < 0) {
+			logfd = str2num(optarg);
+			if (logfd < 0) {
 				ckpt_err("checkpoint: invalid file descriptor\n");
 				exit(1);
 			}
@@ -119,33 +139,37 @@ static void parse_args(struct cr_checkpoint_args *args, int argc, char *argv[])
 		}
 	}
 
-	if (output && args->outfd >= 0) {
+	if (output && outfd >= 0) {
 		ckpt_err("Invalid use of both -o/--output and --output-fd\n");
 		exit(1);
 	}
 
+	excl = force ? 0 : O_EXCL;
+
 	/* output file */
 	if (output) {
-		args->outfd = open(output, O_RDWR | O_CREAT | O_EXCL, 0644);
+		args->outfd = open(output, O_RDWR | O_CREAT | excl, 0644);
 		if (args->outfd < 0) {
 			ckpt_perror("open output file");
 			exit(1);
 		}
-	}
+	} else if (outfd >= 0)
+		args->outfd = outfd;
 
-	if (logfile && args->logfd >= 0) {
+	if (logfile && logfd >= 0) {
 		ckpt_err("Invalid use of both -l/--logfile and --logfile-fd\n");
 		exit(1);
 	}
 
 	/* (optional) log file */
 	if (logfile) {
-		args->logfd = open(logfile, O_RDWR | O_CREAT | O_EXCL, 0644);
+		args->logfd = open(logfile, O_RDWR | O_CREAT | excl, 0644);
 		if (args->logfd < 0) {
 			ckpt_perror("open log file");
 			exit(1);
 		}
-	}
+	} else if (logfd >= 0)
+		args->logfd = logfd;
 }
 
 int main(int argc, char *argv[])

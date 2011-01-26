@@ -1,3 +1,13 @@
+/*
+ *  restart-main.c: restart process(es) from a checkpoint
+ *
+ *  Copyright (C) 2008-2011 Oren Laadan
+ *
+ *  This file is subject to the terms and conditions of the GNU General Public
+ *  License.  See the file COPYING in the main directory of the Linux
+ *  distribution for more details.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -42,6 +52,7 @@ static char usage_str[] =
 "     --input-fd=FD      read data from file descriptor FD (instead of stdin)\n"
 "  -l,--logfile=FILE     write error and debug data to FILE (default=none)\n"
 "     --logfile-fd=FD    write error and debug data to file desctiptor FD\n"
+"  -f,--force            if an output file already exists, overwrite it\n"
 "     --inspect          inspect image on-the-fly for error records\n"
 "  -v,--verbose          verbose output\n"
 "  -d,--debug            debugging output\n"
@@ -120,6 +131,7 @@ static void parse_args(struct cr_restart_args *args, int argc, char *argv[])
 		{ "input-fd",	required_argument,	NULL, 7 },
 		{ "logfile",	required_argument,	NULL, 'l' },
 		{ "logfile-fd",	required_argument,	NULL, 8 },
+		{ "force",	no_argument,		NULL, 'f' },
 		{ "root",	required_argument,	NULL, 'r' },
 		{ "mntns",	no_argument,		NULL, 11 },
 		{ "wait",	no_argument,		NULL, 'w' },
@@ -134,11 +146,15 @@ static void parse_args(struct cr_restart_args *args, int argc, char *argv[])
 		{ "mount-pty",	no_argument,		NULL, 12 },
 		{ NULL,		0,			NULL, 0 }
 	};
-	static char optc[] = "hdvkpPwWF:r:i:l:";
+	static char optc[] = "hdvfkpPwWF:r:i:l:";
 
 	int optind;
 	int sig;
 	int no_pidns;
+	int klogfd;
+	int infd;
+	int force;
+	int excl;
 
 	char *klogfile;
 	char *input;
@@ -146,13 +162,17 @@ static void parse_args(struct cr_restart_args *args, int argc, char *argv[])
 	/* defaults */
 	memset(args, 0, sizeof(*args));
 	args->wait = 1;
-	args->infd = -1;
-	args->klogfd = -1;
+	args->infd = fileno(stdin);
 	args->ulogfd = fileno(stdout);
 	args->uerrfd = fileno(stderr);
+	args->klogfd = CHECKPOINT_FD_NONE;
 	args->warn = CKPT_COND_WARN;
 	args->fail = CKPT_COND_FAIL;
+
 	no_pidns = 0;
+	klogfd = -1;
+	infd = -1;
+	force = 0;
 
 	klogfile = NULL;
 	input = NULL;
@@ -176,8 +196,8 @@ static void parse_args(struct cr_restart_args *args, int argc, char *argv[])
 			input = optarg;
 			break;
 		case 7:
-			args->infd = str2num(optarg);
-			if (args->infd < 0) {
+			infd = str2num(optarg);
+			if (infd < 0) {
 				ckpt_err("restart: invalid file descriptor\n");
 				exit(1);
 			}
@@ -186,11 +206,14 @@ static void parse_args(struct cr_restart_args *args, int argc, char *argv[])
 			klogfile = optarg;
 			break;
 		case 8:
-			args->klogfd = str2num(optarg);
-			if (args->klogfd < 0) {
+			klogfd = str2num(optarg);
+			if (klogfd < 0) {
 				ckpt_err("restart: invalid file descriptor\n");
 				exit(1);
 			}
+			break;
+		case 'f':
+			force = 1;
 			break;
 		case 'p':
 			args->pidns = 1;
@@ -267,7 +290,7 @@ static void parse_args(struct cr_restart_args *args, int argc, char *argv[])
 		exit(1);
 	}
 
-	if (input && args->infd >= 0) {
+	if (input && infd >= 0) {
 		ckpt_err("Invalid use of both -i/--input and --input-fd\n");
 		exit(1);
 	}
@@ -279,21 +302,25 @@ static void parse_args(struct cr_restart_args *args, int argc, char *argv[])
 			ckpt_perror("open input file");
 			exit(1);
 		}
-	}
+	} else if (infd >= 0)
+		args->infd = infd;
 
-	if (klogfile && args->klogfd >= 0) {
+	if (klogfile && klogfd >= 0) {
 		ckpt_err("Invalid use of both -l/--logfile and --logfile-fd\n");
 		exit(1);
 	}
 
+	excl = force ? 0 : O_EXCL;
+
 	/* (optional) log file */
 	if (klogfile) {
-		args->klogfd = open(klogfile, O_RDWR | O_CREAT | O_EXCL, 0644);
+		args->klogfd = open(klogfile, O_RDWR | O_CREAT | excl, 0644);
 		if (args->klogfd < 0) {
 			ckpt_perror("open log file");
 			exit(1);
 		}
-	}
+	} else if (klogfd >= 0)
+		args->klogfd = klogfd;
 }
 
 int main(int argc, char *argv[])
@@ -313,9 +340,7 @@ int main(int argc, char *argv[])
 	parse_args(&args, argc, argv);
 
 	ret = cr_restart(&args);
-	if (ret > 0)
-		ret = 0;
 
-	return ret;
+	return (ret >= 0) ? 0 : 1;
 }
 
