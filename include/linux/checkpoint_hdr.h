@@ -94,7 +94,9 @@ enum {
 	CKPT_HDR_SECURITY,
 #define CKPT_HDR_SECURITY CKPT_HDR_SECURITY
 
-	CKPT_HDR_TREE = 101,
+	CKPT_HDR_PIDS = 101,
+#define CKPT_HDR_PIDS CKPT_HDR_PIDS
+	CKPT_HDR_TREE,
 #define CKPT_HDR_TREE CKPT_HDR_TREE
 	CKPT_HDR_TASK,
 #define CKPT_HDR_TASK CKPT_HDR_TASK
@@ -232,6 +234,8 @@ struct ckpt_hdr_objref {
 enum obj_type {
 	CKPT_OBJ_IGNORE = 0,
 #define CKPT_OBJ_IGNORE CKPT_OBJ_IGNORE
+	CKPT_OBJ_PID,
+#define CKPT_OBJ_PID CKPT_OBJ_PID
 	CKPT_OBJ_INODE,
 #define CKPT_OBJ_INODE CKPT_OBJ_INODE
 	CKPT_OBJ_FILE_TABLE,
@@ -343,24 +347,39 @@ struct ckpt_hdr_container {
 	 */
 } __attribute__((aligned(8)));;
 
-/* task tree */
-struct ckpt_hdr_tree {
+/* pids array */
+struct ckpt_hdr_pids {
 	struct ckpt_hdr h;
-	__s32 nr_tasks;
+	__u32 nr_pids;
+	__u32 nr_vpids;
+	__u32 offset;
 } __attribute__((aligned(8)));
 
 struct ckpt_pids {
+	__u32 depth;
+	__s32 numbers[1];
+} __attribute__((aligned(8)));
+
+/* task tree */
+struct ckpt_hdr_tree {
+	struct ckpt_hdr h;
+	__u32 nr_tasks;
+} __attribute__((aligned(8)));
+
+struct ckpt_task_pids {
 	/* These pids are in the root_nsproxy's pid ns */
 	__s32 vpid;
 	__s32 vppid;
 	__s32 vtgid;
 	__s32 vpgid;
 	__s32 vsid;
-	__s32 depth; /* pid namespace depth relative to container init */
+	__u32 depth;
 } __attribute__((aligned(8)));
 
 /* pids */
-#define CKPT_PID_NULL -1
+/* (negative but not valid error) */
+#define CKPT_PID_NULL (-4096) /* null pid pointer */
+#define CKPT_PID_ROOT (-4097) /* pid same as root task */
 
 /* task data */
 struct ckpt_hdr_task {
