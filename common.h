@@ -7,6 +7,7 @@ static inline void ckpt_msg(int fd, char *format, ...)
 {
 	char buf[BUFSIZE];
 	va_list ap;
+	int err;
 
 	if (fd < 0)
 		return;
@@ -15,7 +16,9 @@ static inline void ckpt_msg(int fd, char *format, ...)
 	vsnprintf(buf, BUFSIZE, format, ap);
 	va_end(ap);
 
+	err = errno;
 	write(fd, buf, strlen(buf));
+	errno = err;
 }
 
 static void inline _strerror(int errnum, char *buf, size_t buflen)
