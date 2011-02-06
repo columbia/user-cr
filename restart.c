@@ -1456,21 +1456,11 @@ static int ckpt_build_tree(struct ckpt_ctx *ctx)
 	return 0;
 }		
 
-static int ckpt_setup_task(struct ckpt_ctx *ctx, int pid_ind, int ppid_ind)
+static int ckpt_ghost_task(struct ckpt_ctx *ctx, struct ckpt_pids *pids,
+			   int pid_ind, int sid_ind, int ppid_ind)
 {
 	struct task *task;
-	struct ckpt_pids *pids;
 	int j;
-
-	/* ignore if outside namespace */
-	if (pid_ind == 0 || pid_ind == CKPT_PID_ROOT)
-		return 0;
-
-	pids = pids_of_index(ctx, pid_ind);
-
-	/* skip if already handled */
-	if (hash_lookup(ctx, pids->numbers[0]))
-		return 0;
 
 	task = &ctx->tasks[ctx->tasks_cnt++];
 
@@ -1479,7 +1469,7 @@ static int ckpt_setup_task(struct ckpt_ctx *ctx, int pid_ind, int ppid_ind)
 	task->pid_ind = pid_ind;
 	task->ppid_ind = ppid_ind;
 	task->tgid_ind = pid_ind;
-	task->sid_ind = ppid_ind;
+	task->sid_ind = sid_ind;
 
 	task->children = NULL;
 	task->next_sib = NULL;
@@ -1498,6 +1488,47 @@ static int ckpt_setup_task(struct ckpt_ctx *ctx, int pid_ind, int ppid_ind)
 	}
 
 	return 0;
+}
+
+static struct ckpt_pids *ckpt_consider_pid(struct ckpt_ctx *ctx, int pid_ind)
+{
+	struct ckpt_pids *pids;
+
+	/* ignore if outside namespace */
+	if (pid_ind == 0 || pid_ind == CKPT_PID_ROOT)
+		return NULL;
+
+	pids = pids_of_index(ctx, pid_ind);
+
+	/* skip if already handled */
+	if (hash_lookup(ctx, pids->numbers[0]))
+		return NULL;
+
+	return pids;
+}
+
+static int ckpt_set_session(struct ckpt_ctx *ctx, int pid_ind, int ppid_ind)
+{
+	struct ckpt_pids *pids;
+
+	pids = ckpt_consider_pid(ctx, pid_ind);
+	if (!pids)
+		return 0;
+
+	return ckpt_ghost_task(ctx, pids, pid_ind, pid_ind, ppid_ind);
+}
+
+static int ckpt_set_task(struct ckpt_ctx *ctx, int pid_ind, int ppid_ind)
+{
+	struct ckpt_pids *pids;
+	struct task *parent;
+
+	pids = ckpt_consider_pid(ctx, pid_ind);
+	if (!pids)
+		return 0;
+
+	parent = hash_lookup_ind(ctx, ppid_ind);
+	return ckpt_ghost_task(ctx, pids, pid_ind, parent->sid_ind, ppid_ind);
 }
 
 static int _ckpt_valid_pid(struct ckpt_ctx *ctx, pid_t pid, char *which, int i)
@@ -1697,17 +1728,29 @@ static int ckpt_init_tree(struct ckpt_ctx *ctx)
 
 	ctx->tasks_cnt = ctx->tasks_nr;
 
-	/* add pids unaccounted for (no tasks) */
+	/*
+	 * Add sids unaccounted for (no tasks): find those orphan pids
+	 * that are used as some task's sid, and create ghost session
+	 * leaders for them. Since they should be session leaders, we
+	 * must do this before adding other ghost tasks for tgid/pgid
+	 * below: the latter is added a non-session leader.
+	 */
 	for (i = 0; i < ctx->tasks_nr; i++) {
-
 		/*
 		 * An unaccounted-for sid belongs to a task that was a
-		 * session leader and died. We can safe set its parent
+		 * session leader and died. We can safely set its parent
 		 * (and creator) to be the root task.
 		 */
-		if (ckpt_setup_task(ctx, tasks_arr[i].vsid, root_pid_ind) < 0)
-			return -1;
 
+		if (ckpt_set_session(ctx, tasks_arr[i].vsid, root_pid_ind) < 0)
+			return -1;
+	}
+
+	/*
+	 * Add tgids/pgids unaccounted for (no tasks): find those
+	 * orphan tgids/pgids and create ghost tasks for them.
+	 */
+	for (i = 0; i < ctx->tasks_nr; i++) {
 		/*
 		 * An sid == 0 means that the session was inherited an
 		 * ancestor of root_task, and more specifically, via
@@ -1723,18 +1766,18 @@ static int ckpt_init_tree(struct ckpt_ctx *ctx)
 		 * need to add it with the same sid as current (and
 		 * other) threads.
 		 */
-		if (ckpt_setup_task(ctx, tasks_arr[i].vtgid, ppid_ind) < 0)
+		if (ckpt_set_task(ctx, tasks_arr[i].vtgid, ppid_ind) < 0)
 			return -1;
 
 		/*
 		 * If pgrp == sid, then the pgrp/sid will already have
 		 * been hashed by now (e.g. by the call above) and the
-		 * ckpt_setup_task() will return promptly.
+		 * ckpt_set_task() will return promptly.
 		 * If pgrp != sid, then the pgrp 'owner' must have the
 		 * same sid as us: all tasks with same pgrp must have
 		 * their sid matching.
 		 */
-		if (ckpt_setup_task(ctx, tasks_arr[i].vpgid, ppid_ind) < 0)
+		if (ckpt_set_task(ctx, tasks_arr[i].vpgid, ppid_ind) < 0)
 			return -1;
 	}
 
