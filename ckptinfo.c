@@ -207,7 +207,8 @@ static int image_read_obj(int fd, struct ckpt_hdr **hh)
 	*p = h;
 
 	ret = __image_read(fd, (p + 1), h.len - sizeof(h));
-	if (ret <= 0) {
+	if (ret < 0) {
+		fprintf(stderr, "read of image failed\n");
 		free(p);
 		return -1;
 	}
