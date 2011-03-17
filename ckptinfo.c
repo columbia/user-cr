@@ -162,8 +162,10 @@ static int __image_read(int fd, void *buf, int len)
 
 	for (nleft = len; nleft; nleft -= nread) {
 		nread = read(fd, buf, nleft);
-		if (nread < 0 && errno == -EAGAIN)
+		if (nread < 0 && ((errno == EAGAIN) || (errno == EINTR))) {
+			nread = 0;
 			continue;
+		}
 		if (nread <= 0)
 			break;
 		buf += nread;
