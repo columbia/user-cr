@@ -155,7 +155,7 @@ ARM_SYSCALL_BASE="#	define __NR_OABI_SYSCALL_BASE 0x900000\n\
 # Get the regular expression for the current architecture
 function get_unistd_regex()
 {
-	local SYS_NR_DEF_REGEX='[[:space:]]*#[[:space:]]*define[[:space:]]*__NR_(checkpoint|restart|clone_with_pids)[[:space:]]+'
+	local SYS_NR_DEF_REGEX='[[:space:]]*#[[:space:]]*define[[:space:]]*__NR_(checkpoint|restart)[[:space:]]+'
 
 	case "$1" in
 	arm)	echo -n "${SYS_NR_DEF_REGEX}"
