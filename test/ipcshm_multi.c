@@ -10,6 +10,9 @@
 #include <linux/sched.h>
 #include <sched.h>
 
+/* For CLONE_NEWIPC */
+#include "../clone.h"
+
 #define OUTFILE  "/tmp/cr-test.out"
 #define SEG_SIZE (20 * 4096)
 #define DELAY 20
