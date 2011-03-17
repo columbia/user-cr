@@ -1,4 +1,6 @@
 # handle cross-compilation
+# Prefix CC, AS, LD, AR for cross compilation
+CROSS_COMPILE ?=
 AR  := ${CROSS_COMPILE}ar
 AS  := ${CROSS_COMPILE}as
 CC  := ${CROSS_COMPILE}gcc

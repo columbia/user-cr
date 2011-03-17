@@ -8,6 +8,13 @@
 
 KERNELSRC ?= ../linux
 
+# Prefix CC, AS, LD, AR for cross compilation
+CROSS_COMPILE ?=
+CC := $(CROSS_COMPILE)gcc
+LD := $(CROSS_COMPILE)ld
+AS := $(CROSS_COMPILE)as
+AR := $(CROSS_COMPILE)ar
+
 CKPT_INCLUDE = -I./include
 CKPT_HEADERS = include/linux/checkpoint.h \
 		include/linux/checkpoint_hdr.h \
