@@ -27,6 +27,11 @@ extern pid_t getsid(pid_t pid);
 
 static const char* procname;
 
+int  __attribute__((weak)) unshare(int flags)
+{
+	return syscall(__NR_unshare, flags);
+}
+
 static void usage(const char *name)
 {
 	printf("usage: %s [-h] [-c] [-mnuUip] [-P <pid-file>]"

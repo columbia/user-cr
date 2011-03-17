@@ -13,6 +13,12 @@
 /* For CLONE_NEWIPC */
 #include "../clone.h"
 
+int  __attribute__((weak)) unshare(int flags)
+{
+       return syscall(__NR_unshare, flags);
+}
+
+
 #define OUTFILE  "/tmp/cr-test.out"
 #define SEG_SIZE (20 * 4096)
 #define DELAY 20
