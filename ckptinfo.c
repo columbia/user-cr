@@ -176,7 +176,7 @@ static int __image_read(int fd, void *buf, int len)
 		return -1;
 	}
 
-	if (nleft && nleft != len) {
+	if (nleft) {
 		fprintf(stderr, "unexpected end of file (read %d of %d)\n",
 			len - nleft, len);
 		return -1;
