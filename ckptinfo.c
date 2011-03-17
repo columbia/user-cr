@@ -283,7 +283,7 @@ static int image_parse_tree(struct ckpt_hdr *h, int fd, struct args *args)
 	}
 	free(h);
 
-	return 0;
+	return 1;
 }
 
 static int image_parse_objref(struct ckpt_hdr *h, int fd, struct args *args)
