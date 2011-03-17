@@ -157,7 +157,7 @@ int main(int argc, char *argv[])
 
 static int __image_read(int fd, void *buf, int len)
 {
-	ssize_t nread;
+	ssize_t nread = 0;
 	int nleft;
 
 	for (nleft = len; nleft; nleft -= nread) {
