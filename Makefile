@@ -100,7 +100,7 @@ endif
 ckptinfo: ckptinfo_types.o
 
 ckptinfo_types.c: $(CKPT_HEADERS) ckptinfo.py
-	cat $(CKPT_HEADERS) | ./ckptinfo.py > ckptinfo_types.c
+	cat $(CKPT_HEADERS) | cpp -P -U__KERNEL__  $(CKPT_INCLUDE) - | ./ckptinfo.py > ckptinfo_types.c
 
 install: $(PROGS)
 	/usr/bin/install -d -D $(BIN_INSTALL_DIR) $(LIB_INSTALL_DIR)
