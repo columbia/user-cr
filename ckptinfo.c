@@ -263,12 +263,12 @@ static int image_parse_tree(struct ckpt_hdr *h, int fd, struct args *args)
 
 	hh = (struct ckpt_hdr_tree *) h;
 	nr_tasks = hh->nr_tasks;
-	free(h);
 
+	h = NULL;
 	ret = image_read_obj(fd, &h);
 	if (ret == 0)
 		fprintf(stderr, "process tree: unexpected end of file");
-	if (ret <= 0)
+	if (!h || ret <= 0)
 		return -1;
 
 	pp =  (struct ckpt_task_pids *) h;
@@ -276,9 +276,9 @@ static int image_parse_tree(struct ckpt_hdr *h, int fd, struct args *args)
 	if (args->show_task_tree) {
 		for (i = 0; i < nr_tasks; i++) {
 			printf("Task %d: pid %d ppid %d tgid %d"
-				"pgid %d sid %d depth %d\n",
-				i, pp[i].vpid, pp[i].vppid, pp[i].vtgid,
-				pp[i].vpgid, pp[i].vsid, pp[i].depth);
+			       "pgid %d sid %d depth %d\n",
+			       i, pp[i].vpid, pp[i].vppid, pp[i].vtgid,
+			       pp[i].vpgid, pp[i].vsid, pp[i].depth);
 		}
 	}
 	free(h);
