@@ -34,7 +34,6 @@
 #include <stdarg.h>
 #include <assert.h>
 
-#include <linux/sched.h>
 #include <linux/checkpoint.h>
 #include <linux/checkpoint_hdr.h>
 

@@ -7,7 +7,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
-#include <linux/sched.h>
 #include <sched.h>
 
 /* For CLONE_NEWIPC */
