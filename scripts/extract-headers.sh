@@ -126,6 +126,7 @@ cat - > "${OUTPUT_INCLUDES}/linux/checkpoint_hdr.h" <<-EOFOO
 #ifndef _CHECKPOINT_CKPT_HDR_H_
 #define _CHECKPOINT_CKPT_HDR_H_
 
+#include <unistd.h>
 EOFOO
 
 do_cpp "${KERNELSRC}/include/linux/checkpoint_hdr.h" "_CHECKPOINT_CKPT_HDR_H_" \
@@ -173,6 +174,7 @@ cat - <<-EOFOE
 #ifndef _LINUX_CHECKPOINT_H_
 #define _LINUX_CHECKPOINT_H_
 
+#include <unistd.h>
 EOFOE
 
 do_cpp "${KERNELSRC}/include/linux/checkpoint.h" "_LINUX_CHECKPOINT_H_"
@@ -196,7 +198,11 @@ done
 
 cat - <<-EOFOFOE
 #else
+
+#if !defined(__NR_checkpoint) || !defined(__NR_restart)
 #error "Architecture does not have definitons for __NR_(checkpoint|restart)"
+#endif
+
 #endif
 #endif /* _LINUX_CHECKPOINT_H_ */
 EOFOFOE
