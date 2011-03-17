@@ -17,31 +17,31 @@ regx_obj = re.compile(r"^(\s*CKPT_)(OBJ_[A-Z_]*)")
 regx_file = re.compile(r"^(\s*CKPT_)(FILE_[A-Z_]*)")
 regx_vma = re.compile(r"^(\s*CKPT_)(VMA_[A-Z_]*)")
 
-list_hdr = []
-list_obj = []
-list_file = []
-list_vma = []
+enums_hdr = {}
+enums_obj = {}
+enums_file = {}
+enums_vma = {}
 
 lineno = 1
 
-def match_something(line, regx, list, type):
+def match_something(line, regx, enum_set, type):
     match = regx.search(line)
     if match:
         if match.lastindex != 2:
             print "Multiple %s... matches on line %d" % (type, lineno)
             sys.exit(1)
-        list.append(match.group(2))
+        enum_set[match.group(2)] = True
         return 1
     else:
         return 0
 
-def print_something(list, type):
+def print_something(enum_set, type):
     print """
 char *%s_to_str(int type)
 {
 	switch (type) {
 """ % type
-    for key in list:
+    for key in enum_set.keys():
         print "\tcase CKPT_%s: return \"%s\";\n" % (key, key)
 
     print """
@@ -60,13 +60,13 @@ while (1):
     line = sys.stdin.readline()
     if line == "": break
 
-    if match_something(line, regx_hdr, list_hdr, "CKPT_HDR_..."):
+    if match_something(line, regx_hdr, enums_hdr, "CKPT_HDR_..."):
         pass
-    elif match_something(line, regx_obj, list_obj, "CKPT_OBJ_..."):
+    elif match_something(line, regx_obj, enums_obj, "CKPT_OBJ_..."):
         pass
-    elif match_something(line, regx_file, list_file, "CKPT_FILE_..."):
+    elif match_something(line, regx_file, enums_file, "CKPT_FILE_..."):
         pass
-    elif match_something(line, regx_vma, list_vma, "CKPT_VMA_..."):
+    elif match_something(line, regx_vma, enums_vma, "CKPT_VMA_..."):
         pass
 
 # Now output the appropriate C code for switch statements that
@@ -82,9 +82,9 @@ print """
 #include <linux/checkpoint_hdr.h>
 """
 
-print_something(list_hdr, "hdr")
-print_something(list_obj, "obj")
-print_something(list_file, "file")
-print_something(list_vma, "vma")
+print_something(enums_hdr, "hdr")
+print_something(enums_obj, "obj")
+print_something(enums_file, "file")
+print_something(enums_vma, "vma")
 
 # Done
