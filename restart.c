@@ -195,6 +195,7 @@ struct ckpt_ctx {
 
 	int error;
 	int success;
+	int printed;
 
 	int pipe_in;
 	int pipe_out;
@@ -694,6 +695,27 @@ static inline pid_t pid_at_index(struct ckpt_ctx *ctx, int n)
 	return pids_of_index(ctx, n)->numbers[0];
 }
 
+static void verbose_status(struct ckpt_ctx *ctx)
+{
+	if (ctx->printed)
+		return;
+
+	if (ctx->error)
+		errno = ctx->error;
+
+	if (ctx->success) {
+		ckpt_dbg("c/r succeeded\n");
+		ckpt_verbose("Restart succeeded\n");
+	} else {
+		ckpt_dbg("c/r failed ?\n");
+		ckpt_perror("restart");
+		ckpt_verbose("Restart failed\n");
+	}
+
+	ctx->printed = 1;
+}
+
+
 int cr_restart(struct cr_restart_args *args)
 {
 	struct ckpt_ctx ctx;
@@ -847,20 +869,12 @@ int cr_restart(struct cr_restart_args *args)
 	if (global_feeder_pid)
 		waitpid(global_feeder_pid, NULL, 0);
 
-	if (ctx.error)
-		errno = ctx.error;
+	verbose_status(&ctx);
 
-	if (ctx.success) {
-		ckpt_dbg("c/r succeeded\n");
-		ckpt_verbose("Restart succeeded\n");
-		if (ctx.error)
-			ckpt_verbose("Post restart error: %d\n", ctx.error);
-	} else {
-		ckpt_dbg("c/r failed ?\n");
-		ckpt_perror("restart");
-		ckpt_verbose("Restart failed\n");
+	if (ctx.success && ctx.error)
+		ckpt_verbose("Post restart error: %d\n", ctx.error);
+	else if (!ctx.success)
 		ret = -1;
-	}
 
 	return ret;
 }
@@ -1239,7 +1253,7 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 		 * Close all open files to eliminate dependencies on
 		 * the outside of the container. Else, a subsequent
 		 * container-checkpoint will fail due to leaks. (Skip
-		 * when debugging to keep output fro us visible).
+		 * when debugging to keep output for us visible).
 		 */
 		if (!global_debug) {
 			ckpt_close_files();
@@ -1252,7 +1266,7 @@ static int ckpt_coordinator(struct ckpt_ctx *ctx)
 		 * Otherwise, container will die as soon as we exit.
 		 */
 		ret = ckpt_pretend_reaper(ctx);
-	} else if (ctx->args->wait) {
+	} else if (ret == 0 && ctx->args->wait) {
 		ret = ckpt_collect_child(ctx);
 	}
 
