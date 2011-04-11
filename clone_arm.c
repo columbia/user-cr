@@ -21,7 +21,6 @@
  * libc doesn't support eclone() yet...
  * below is arch-dependent code to use the syscall
  */
-#include <linux/checkpoint.h>
 
 #include "eclone.h"
 

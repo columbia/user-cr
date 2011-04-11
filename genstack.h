@@ -1,6 +1,7 @@
 #ifndef _GENSTACK_H_
 #define _GENSTACK_H_
 
+#include <unistd.h>
 #include <stdbool.h>
 #include <stdint.h>
 

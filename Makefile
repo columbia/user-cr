@@ -66,7 +66,7 @@ $(LIB_ECLONE):
 # restart needs to be thread-safe
 restart: CFLAGS += -D__REENTRANT -pthread
 
-$(CR_OBJS): common.h checkpoint.h
+$(CR_OBJS): common.h checkpoint.h clone.h eclone.h genstack.h
 
 restart: restart.o restart-main.o
 
@@ -74,9 +74,12 @@ checkpoint: checkpoint.o checkpoint-main.o
 
 # eclone() is architecture specific
 ifneq ($(SUBARCH),)
-$(ECLONE_PROGS): $(LIB_ECLONE) 
+$(ECLONE_PROGS): $(LIB_ECLONE)
 $(ECLONE_PROGS): CFLAGS += -DARCH_HAS_ECLONE
 $(LIB_ECLONE): clone_$(SUBARCH).o genstack.o
+
+clone_$(SUBARCH).o: clone.h eclone.h
+genstack.o: genstack.h
 endif
 
 # on powerpc, need also assembly file
@@ -97,7 +100,7 @@ $(LIB_ECLONE): eclone_$(SUBARCH)_.o
 endif
 
 # ckptinfo dependencies
-ckptinfo: ckptinfo_types.o
+ckptinfo: ckptinfo_types.o $(ECLONE_HDRS)
 
 ckptinfo_types.c: $(CKPT_HEADERS) ckptinfo.py
 	cat $(CKPT_HEADERS) | cpp -P -U__KERNEL__  $(CKPT_INCLUDE) - | ./ckptinfo.py > ckptinfo_types.c

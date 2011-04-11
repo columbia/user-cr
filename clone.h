@@ -13,7 +13,7 @@
  */
 #include <sys/syscall.h>
 
-#ifndef HAVE_UNSHARE
+#ifndef __NR_unshare
 
 #if __i386__
 #    define __NR_unshare 310
@@ -37,7 +37,7 @@
 #    error "Architecture not supported"
 #endif
 
-#endif /* HAVE_UNSHARE */
+#endif /* __NR_unshare */
 
 #ifndef CLONE_NEWUTS
 #define CLONE_NEWUTS		0x04000000

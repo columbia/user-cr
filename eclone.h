@@ -2,6 +2,13 @@
 #define _ECLONE_H_
 
 #include <stdint.h>
+#include <sys/types.h>
+
+#ifndef __NR_eclone
+#include <linux/checkpoint.h>
+#endif
+
+#include "clone.h"
 
 struct clone_args {
 	uint64_t clone_flags_high;
