@@ -2918,7 +2918,7 @@ static int ckpt_read_pids(struct ckpt_ctx *ctx)
 
 	ctx->pids_nr = h->nr_pids;
 	ctx->vpids_nr = h->nr_vpids;
-	ctx->pid_offset = h->offset;
+	ctx->pid_offset = h->offset - 1;
 
         len = ctx->pids_nr * sizeof(struct ckpt_pids) +
 		ctx->vpids_nr * sizeof(__s32);
