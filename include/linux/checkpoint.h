@@ -4,6 +4,7 @@
 #ifndef _LINUX_CHECKPOINT_H_
 #define _LINUX_CHECKPOINT_H_
 
+#include <unistd.h>
 /*
  *  Generic checkpoint-restart
  *
@@ -31,7 +32,17 @@
 #define CHECKPOINT_FD_NONE -1
 
 
-#if __s390x__
+#if __powerpc__
+
+#	ifndef __NR_eclone
+#		define __NR_eclone 345
+#	endif
+
+#elif __s390x__
+
+#	ifndef __NR_eclone
+#		define __NR_eclone 335
+#	endif
 
 #	ifndef __NR_checkpoint
 #		define __NR_checkpoint 336
@@ -43,6 +54,10 @@
 
 #elif __i386__
 
+#	ifndef __NR_eclone
+#		define __NR_eclone 341
+#	endif
+
 #	ifndef __NR_checkpoint
 #		define __NR_checkpoint 342
 #	endif
@@ -53,15 +68,23 @@
 
 #elif __x86_64__
 
+#	ifndef __NR_eclone
+#		define __NR_eclone 303
+#	endif
+
 #	ifndef __NR_checkpoint
-#		define __NR_checkpoint 301
+#		define __NR_checkpoint 304
 #	endif
 
 #	ifndef __NR_restart
-#		define __NR_restart 302
+#		define __NR_restart 305
 #	endif
 
 #else
+
+#if !defined(__NR_checkpoint) || !defined(__NR_restart)
 #error "Architecture does not have definitons for __NR_(checkpoint|restart)"
+#endif
+
 #endif
 #endif /* _LINUX_CHECKPOINT_H_ */

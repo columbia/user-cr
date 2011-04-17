@@ -4,6 +4,7 @@
 #ifndef _CHECKPOINT_CKPT_HDR_H_
 #define _CHECKPOINT_CKPT_HDR_H_
 
+#include <unistd.h>
 /*
  *  Generic container checkpoint-restart
  *
@@ -156,6 +157,8 @@ enum {
 #define CKPT_HDR_VMA CKPT_HDR_VMA
 	CKPT_HDR_PGARR,
 #define CKPT_HDR_PGARR CKPT_HDR_PGARR
+	CKPT_HDR_HPAGE,
+#define CKPT_HDR_HPAGE CKPT_HDR_HPAGE
 	CKPT_HDR_MM_CONTEXT,
 #define CKPT_HDR_MM_CONTEXT CKPT_HDR_MM_CONTEXT
 
@@ -352,7 +355,7 @@ struct ckpt_hdr_pids {
 	struct ckpt_hdr h;
 	__u32 nr_pids;
 	__u32 nr_vpids;
-	__u32 offset;
+	__u32 offset;  /* objref of the first (root) pid */
 } __attribute__((aligned(8)));
 
 struct ckpt_pids {
@@ -376,7 +379,6 @@ struct ckpt_task_pids {
 	__u32 depth;
 } __attribute__((aligned(8)));
 
-/* pids */
 /* (negative but not valid error) */
 #define CKPT_PID_NULL (-4096) /* null pid pointer */
 #define CKPT_PID_ROOT (-4097) /* pid same as root task */
@@ -384,22 +386,28 @@ struct ckpt_task_pids {
 /* task data */
 struct ckpt_hdr_task {
 	struct ckpt_hdr h;
+	__u32 flags;
 	__u32 state;
 	__u32 exit_state;
 	__u32 exit_code;
 	__u32 exit_signal;
 	__u32 pdeath_signal;
 
+	__u64 set_child_tid;
+	__u64 clear_child_tid;
+	__u64 sas_ss_sp;
+	__u32 sas_ss_size;
+
 	__u32 compat_robust_futex_head_len;
 	__u32 compat_robust_futex_list; /* a compat __user ptr */
 	__u32 robust_futex_head_len;
 	__u64 robust_futex_list; /* a __user ptr */
 
-	__u64 set_child_tid;
-	__u64 clear_child_tid;
-	__u64 sas_ss_sp;
-	__u32 sas_ss_size;
 } __attribute__((aligned(8)));
+
+#define CKPT_PF_FORKNOEXEC 0x1
+#define CKPT_PF_SUPERPRIV 0x2
+#define CKPT_PF_VALID (CKPT_PF_FORKNOEXEC | CKPT_PF_SUPERPRIV)
 
 /* Posix capabilities */
 struct ckpt_capabilities {
@@ -903,6 +911,10 @@ enum vma_type {
 #define CKPT_VMA_SHM_IPC CKPT_VMA_SHM_IPC
 	CKPT_VMA_SHM_IPC_SKIP,	/* shared sysvipc (skip contents) */
 #define CKPT_VMA_SHM_IPC_SKIP CKPT_VMA_SHM_IPC_SKIP
+	CKPT_VMA_HUGETLB,
+#define CKPT_VMA_HUGETLB CKPT_VMA_HUGETLB
+	CKPT_VMA_HUGETLB_SKIP,
+#define CKPT_VMA_HUGETLB_SKIP CKPT_VMA_HUGETLB_SKIP
 };
 
 /* vma descriptor */
@@ -919,12 +931,24 @@ struct ckpt_hdr_vma {
 	__u64 vm_page_prot;
 	__u64 vm_flags;
 	__u64 vm_pgoff;
+
+	__u16 hugetlb_shift;
 } __attribute__((aligned(8)));
 
 /* page array */
 struct ckpt_hdr_pgarr {
 	struct ckpt_hdr h;
 	__u64 nr_pages;		/* number of pages to saved */
+} __attribute__((aligned(8)));
+
+/* huge page */
+struct ckpt_hdr_hpage {
+	struct ckpt_hdr h;
+	union {
+		__u64 vaddr;
+		__u64 index;
+	};
+	__u16 shift;
 } __attribute__((aligned(8)));
 
 /* signals */
@@ -1050,6 +1074,7 @@ struct ckpt_hdr_ipc_shm {
 	__u32 mlock_uid;
 	__u32 flags;
 	__u32 objref;
+	__u16 shift;  /* hugetlb */
 } __attribute__((aligned(8)));
 
 struct ckpt_hdr_ipc_msg {
