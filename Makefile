@@ -23,7 +23,11 @@ CKPT_HEADERS = include/linux/checkpoint.h \
 CR_OBJS = checkpoint.o checkpoint-main.o restart.o restart-main.o
 
 # detect architecture (for eclone)
+ifneq ($(ARCH),)
+SUBARCH ?= $(ARCH)
+else
 SUBARCH ?= $(patsubst i%86,x86_32,$(shell uname -m))
+endif
 
 # handle cross-compilation
 AR  := ${CROSS_COMPILE}ar
