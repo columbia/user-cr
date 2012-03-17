@@ -44,7 +44,7 @@
  *
  */
 #define CKPT_STRUCT_MEMBER(type,member) (((struct type *)(NULL))->member)
-#define CKPT_BUILD_BUG_ON_MISMATCH(a,b) (BUILD_BUG_ON(sizeof(a) != sizeof(b)))
+#define CKPT_BUILD_BUG_ON_MISMATCH(a,b) BUILD_BUG_ON(sizeof(a) != sizeof(b))
 
 /*
  * To maintain compatibility between 32-bit and 64-bit architecture flavors,
@@ -224,6 +224,8 @@ enum {
 #define CKPT_ARCH_X86_64 CKPT_ARCH_X86_64
 	CKPT_ARCH_S390X,
 #define CKPT_ARCH_S390X CKPT_ARCH_S390X
+	CKPT_ARCH_ARM,
+#define CKPT_ARCH_ARM CKPT_ARCH_ARM
 };
 
 /* shared objrects (objref) */

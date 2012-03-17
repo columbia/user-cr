@@ -32,52 +32,74 @@
 #define CHECKPOINT_FD_NONE -1
 
 
-#if __powerpc__
+#if __arm__
+
+#	define __NR_OABI_SYSCALL_BASE 0x900000
+#	if defined(__thumb__) || defined(__ARM_EABI__)
+#		define __NR_SYSCALL_BASE	0
+#	else
+#		define __NR_SYSCALL_BASE	__NR_OABI_SYSCALL_BASE
+#	endif
+
 
 #	ifndef __NR_eclone
-#		define __NR_eclone 345
+#		define __NR_eclone (__NR_SYSCALL_BASE+376)
+#	endif
+
+#	ifndef __NR_checkpoint
+#		define __NR_checkpoint (__NR_SYSCALL_BASE+377)
+#	endif
+
+#	ifndef __NR_restart
+#		define __NR_restart (__NR_SYSCALL_BASE+378)
+#	endif
+
+#elif __powerpc__
+
+#	ifndef __NR_eclone
+#		define __NR_eclone 351
 #	endif
 
 #elif __s390x__
 
 #	ifndef __NR_eclone
-#		define __NR_eclone 335
+#		define __NR_eclone 340
 #	endif
 
 #	ifndef __NR_checkpoint
-#		define __NR_checkpoint 336
+#		define __NR_checkpoint 341
 #	endif
 
 #	ifndef __NR_restart
-#		define __NR_restart 337
+#		define __NR_restart 342
 #	endif
 
 #elif __i386__
 
 #	ifndef __NR_eclone
-#		define __NR_eclone 341
+#		define __NR_eclone 347
 #	endif
 
 #	ifndef __NR_checkpoint
-#		define __NR_checkpoint 342
+#		define __NR_checkpoint 348
 #	endif
 
 #	ifndef __NR_restart
-#		define __NR_restart 343
+#		define __NR_restart 349
 #	endif
 
 #elif __x86_64__
 
 #	ifndef __NR_eclone
-#		define __NR_eclone 303
+#		define __NR_eclone 312
 #	endif
 
 #	ifndef __NR_checkpoint
-#		define __NR_checkpoint 304
+#		define __NR_checkpoint 313
 #	endif
 
 #	ifndef __NR_restart
-#		define __NR_restart 305
+#		define __NR_restart 314
 #	endif
 
 #else
