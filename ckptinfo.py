@@ -38,7 +38,8 @@ char *%s_to_str(int type)
 	switch (type) {
 """ % type
     for key in enum_set.keys():
-        print "\tcase CKPT_%s: return \"%s\";\n" % (key, key)
+        print "#ifdef CKPT_%s\n\tcase CKPT_%s: return \"%s\";\n#endif\n" \
+                % (key,key, key)
 
     print """
 	}
